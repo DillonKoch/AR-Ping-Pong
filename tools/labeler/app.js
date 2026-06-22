@@ -2,8 +2,15 @@ const state = {
   videoObjectUrl: null,
   tool: "ball",
   fps: 30,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  annotationDirectoryHandle: null,
   activeTablePoints: [],
+  activeTableFrame: null,
+  activeTablePointDrag: null,
   activeNetPoints: [],
+  activeBallDrag: null,
   history: [],
   annotations: createEmptyAnnotations(),
 };
@@ -23,12 +30,17 @@ const eventHotkeys = {
 const elements = {
   videoInput: document.querySelector("#videoInput"),
   annotationInput: document.querySelector("#annotationInput"),
+  chooseSaveFolderButton: document.querySelector("#chooseSaveFolderButton"),
   downloadButton: document.querySelector("#downloadButton"),
+  viewport: document.querySelector("#viewport"),
   video: document.querySelector("#video"),
   canvas: document.querySelector("#overlay"),
   playButton: document.querySelector("#playButton"),
   prevFrameButton: document.querySelector("#prevFrameButton"),
   nextFrameButton: document.querySelector("#nextFrameButton"),
+  zoomOutButton: document.querySelector("#zoomOutButton"),
+  zoomInButton: document.querySelector("#zoomInButton"),
+  resetViewButton: document.querySelector("#resetViewButton"),
   fpsInput: document.querySelector("#fpsInput"),
   frameInput: document.querySelector("#frameInput"),
   jumpButton: document.querySelector("#jumpButton"),
@@ -36,11 +48,13 @@ const elements = {
   timeline: document.querySelector("#timeline"),
   videoName: document.querySelector("#videoName"),
   timeReadout: document.querySelector("#timeReadout"),
+  saveStatus: document.querySelector("#saveStatus"),
   frameSummary: document.querySelector("#frameSummary"),
   eventList: document.querySelector("#eventList"),
   occludedInput: document.querySelector("#occludedInput"),
   blurredInput: document.querySelector("#blurredInput"),
   undoButton: document.querySelector("#undoButton"),
+  finishTableButton: document.querySelector("#finishTableButton"),
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
 };
@@ -49,22 +63,30 @@ const ctx = elements.canvas.getContext("2d");
 
 elements.videoInput.addEventListener("change", handleVideoInput);
 elements.annotationInput.addEventListener("change", handleAnnotationInput);
+elements.chooseSaveFolderButton.addEventListener("click", chooseAnnotationSaveFolder);
 elements.downloadButton.addEventListener("click", downloadAnnotations);
 elements.playButton.addEventListener("click", togglePlayback);
 elements.prevFrameButton.addEventListener("click", () => stepFrames(-1));
 elements.nextFrameButton.addEventListener("click", () => stepFrames(1));
+elements.zoomOutButton.addEventListener("click", () => adjustZoom(1 / 1.25));
+elements.zoomInButton.addEventListener("click", () => adjustZoom(1.25));
+elements.resetViewButton.addEventListener("click", resetView);
 elements.fpsInput.addEventListener("change", updateFps);
 elements.frameInput.addEventListener("change", jumpToFrameInput);
 elements.jumpButton.addEventListener("click", jumpToFrameInput);
 elements.exportFrameButton.addEventListener("click", exportCurrentFrame);
 elements.timeline.addEventListener("input", handleTimelineInput);
-elements.canvas.addEventListener("click", handleCanvasClick);
+elements.canvas.addEventListener("pointerdown", handleCanvasPointerDown);
+elements.canvas.addEventListener("pointermove", handleCanvasPointerMove);
+elements.canvas.addEventListener("pointerup", handleCanvasPointerUp);
+elements.canvas.addEventListener("pointercancel", cancelBallDrag);
 elements.video.addEventListener("loadedmetadata", handleLoadedMetadata);
 elements.video.addEventListener("timeupdate", render);
 elements.video.addEventListener("seeked", render);
 elements.video.addEventListener("play", render);
 elements.video.addEventListener("pause", render);
 elements.undoButton.addEventListener("click", undo);
+elements.finishTableButton.addEventListener("click", finishTablePolygon);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
 
@@ -139,8 +161,12 @@ function handleAnnotationInput(event) {
       elements.fpsInput.value = String(state.fps);
       elements.videoName.textContent = state.annotations.video.filename || "Labels loaded";
       state.activeTablePoints = [];
+      state.activeTableFrame = null;
+      state.activeTablePointDrag = null;
       state.activeNetPoints = [];
       state.history = [];
+      interpolateBallLabels();
+      interpolateTableLabels();
       render();
     } catch (error) {
       window.alert(`Could not load annotation JSON: ${error.message}`);
@@ -151,13 +177,25 @@ function handleAnnotationInput(event) {
 
 function normalizeAnnotations(input) {
   const empty = createEmptyAnnotations();
-  return {
+  const normalized = {
     ...empty,
     ...input,
     video: { ...empty.video, ...(input.video || {}) },
     frames: Array.isArray(input.frames) ? input.frames : [],
     events: Array.isArray(input.events) ? input.events : [],
   };
+  normalized.events = uniqueEvents(normalized.events);
+  return normalized;
+}
+
+function uniqueEvents(events) {
+  const byFrameAndType = new Map();
+
+  events.forEach((event) => {
+    byFrameAndType.set(`${event.frame}:${event.type}`, event);
+  });
+
+  return Array.from(byFrameAndType.values()).sort((a, b) => a.frame - b.frame || a.type.localeCompare(b.type));
 }
 
 function updateFps() {
@@ -213,8 +251,41 @@ function handleKeydown(event) {
     togglePlayback();
   }
 
-  if (key === ",") stepFrames(-1);
-  if (key === ".") stepFrames(1);
+  if (key === "arrowleft" && event.shiftKey) {
+    event.preventDefault();
+    panView(40, 0);
+  } else if (key === "arrowright" && event.shiftKey) {
+    event.preventDefault();
+    panView(-40, 0);
+  } else if (key === "arrowup" && event.shiftKey) {
+    event.preventDefault();
+    panView(0, 40);
+  } else if (key === "arrowdown" && event.shiftKey) {
+    event.preventDefault();
+    panView(0, -40);
+  } else if (key === "arrowleft" || key === ",") {
+    event.preventDefault();
+    stepFrames(-1);
+  } else if (key === "arrowright" || key === ".") {
+    event.preventDefault();
+    stepFrames(1);
+  } else if (key === "arrowup" || key === "=" || key === "+") {
+    event.preventDefault();
+    adjustZoom(1.25);
+  } else if (key === "arrowdown" || key === "-") {
+    event.preventDefault();
+    adjustZoom(1 / 1.25);
+  } else if (key === "0") {
+    event.preventDefault();
+    resetView();
+  } else if (key === "enter") {
+    event.preventDefault();
+    finishTablePolygon();
+  } else if (key === "escape") {
+    event.preventDefault();
+    cancelPendingPoints();
+  }
+
   if (key === "b") setTool("ball");
   if (key === "t") setTool("table");
   if (key === "n") setTool("net");
@@ -227,6 +298,8 @@ function handleKeydown(event) {
 function setTool(tool) {
   state.tool = tool;
   state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === tool);
@@ -234,49 +307,301 @@ function setTool(tool) {
   render();
 }
 
-function handleCanvasClick(event) {
+function adjustZoom(multiplier) {
+  const nextZoom = Math.min(8, Math.max(1, state.zoom * multiplier));
+  if (nextZoom === 1) {
+    state.panX = 0;
+    state.panY = 0;
+  }
+  state.zoom = nextZoom;
+  render();
+}
+
+function panView(deltaX, deltaY) {
+  if (state.zoom === 1) return;
+
+  state.panX += deltaX;
+  state.panY += deltaY;
+  render();
+}
+
+function resetView() {
+  state.zoom = 1;
+  state.panX = 0;
+  state.panY = 0;
+  render();
+}
+
+function handleCanvasPointerDown(event) {
   if (!elements.video.src || state.tool === "select") return;
 
-  const point = canvasPointToVideoPoint(event.offsetX, event.offsetY);
+  const localPoint = getCanvasLocalPoint(event);
+  const point = canvasPointToVideoPoint(localPoint.x, localPoint.y);
   const frame = getCurrentFrame();
 
-  pushHistory(`draw-${state.tool}`);
-  const frameLabel = getOrCreateFrameLabel(frame);
-
   if (state.tool === "ball") {
-    upsertObject(frameLabel, {
-      type: "ball",
-      center: [round(point.x), round(point.y)],
-      radius: estimateBallRadius(),
-      occluded: elements.occludedInput.checked,
-      blurred: elements.blurredInput.checked,
-    });
+    elements.canvas.setPointerCapture(event.pointerId);
+    state.activeBallDrag = {
+      pointerId: event.pointerId,
+      frame,
+      start: point,
+      current: point,
+    };
+    render();
+    return;
   }
 
   if (state.tool === "table") {
-    state.activeTablePoints.push([round(point.x), round(point.y)]);
-    if (state.activeTablePoints.length === 4) {
-      upsertObject(frameLabel, {
-        type: "table",
-        polygon: state.activeTablePoints,
-      });
+    const tablePoint = findNearestTablePoint(frame, localPoint.x, localPoint.y);
+    if (tablePoint) {
+      pushHistory("drag-table-point");
+      tablePoint.table.interpolated = false;
+      state.activeTablePointDrag = {
+        pointerId: event.pointerId,
+        table: tablePoint.table,
+        pointIndex: tablePoint.pointIndex,
+      };
+      elements.canvas.setPointerCapture(event.pointerId);
+      render();
+      return;
+    }
+
+    if (state.activeTablePoints.length > 0 && state.activeTableFrame !== frame) {
       state.activeTablePoints = [];
     }
+    state.activeTableFrame = frame;
+    state.activeTablePoints.push([round(point.x), round(point.y)]);
+    render();
+    return;
   }
 
   if (state.tool === "net") {
     state.activeNetPoints.push([round(point.x), round(point.y)]);
     if (state.activeNetPoints.length === 2) {
+      pushHistory("draw-net");
+      const frameLabel = getOrCreateFrameLabel(frame);
       upsertObject(frameLabel, {
         type: "net",
         line: state.activeNetPoints,
       });
       state.activeNetPoints = [];
     }
+    render();
+    return;
   }
 
   cleanupEmptyFrames();
   render();
+}
+
+function findNearestTablePoint(frame, canvasX, canvasY) {
+  const frameLabel = getFrameLabel(frame);
+  const table = frameLabel?.objects.find((object) => object.type === "table");
+  if (!table) return null;
+
+  let nearest = null;
+  table.polygon.forEach(([x, y], pointIndex) => {
+    const point = videoPointToCanvasPoint(x, y);
+    const distance = Math.hypot(point.x - canvasX, point.y - canvasY);
+    if (distance <= 14 && (!nearest || distance < nearest.distance)) {
+      nearest = { table, pointIndex, distance };
+    }
+  });
+
+  return nearest;
+}
+
+function finishTablePolygon() {
+  if (state.activeTablePoints.length < 3) return;
+
+  pushHistory("draw-table");
+  const frameLabel = getOrCreateFrameLabel(state.activeTableFrame ?? getCurrentFrame());
+  upsertObject(frameLabel, {
+    type: "table",
+    polygon: completeTablePolygon(state.activeTablePoints),
+    interpolated: false,
+  });
+  state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  interpolateTableLabels();
+  cleanupEmptyFrames();
+  render();
+}
+
+function completeTablePolygon(points) {
+  if (points.length < 3) return [...points];
+
+  const width = state.annotations.video.width || elements.video.videoWidth;
+  const height = state.annotations.video.height || elements.video.videoHeight;
+  if (!width || !height) return [...points];
+
+  const margin = Math.max(12, Math.min(width, height) * 0.03);
+  const first = snapPointToFrameEdge(points[0], width, height, margin);
+  const last = snapPointToFrameEdge(points[points.length - 1], width, height, margin);
+
+  if (!first || !last) return [...points];
+
+  const boundaryPoints = shortestFrameBoundaryPath(last, first, width, height);
+  return [first.point, ...points.slice(1, -1), last.point, ...boundaryPoints];
+}
+
+function snapPointToFrameEdge(point, width, height, margin) {
+  const distances = [
+    { edge: "left", distance: point[0], point: [0, point[1]] },
+    { edge: "right", distance: width - point[0], point: [width, point[1]] },
+    { edge: "top", distance: point[1], point: [point[0], 0] },
+    { edge: "bottom", distance: height - point[1], point: [point[0], height] },
+  ].sort((a, b) => a.distance - b.distance);
+
+  if (distances[0].distance > margin) return null;
+
+  const snapped = distances[0];
+  const clamped = [
+    round(Math.max(0, Math.min(width, snapped.point[0]))),
+    round(Math.max(0, Math.min(height, snapped.point[1]))),
+  ];
+  return {
+    edge: snapped.edge,
+    point: clamped,
+    position: frameBoundaryPosition(clamped, width, height),
+  };
+}
+
+function shortestFrameBoundaryPath(start, end, width, height) {
+  const perimeter = 2 * (width + height);
+  const clockwiseDistance = (end.position - start.position + perimeter) % perimeter;
+  const counterDistance = (start.position - end.position + perimeter) % perimeter;
+
+  if (clockwiseDistance <= counterDistance) {
+    return frameBoundaryCornersBetween(start.position, end.position, width, height, 1);
+  }
+  return frameBoundaryCornersBetween(start.position, end.position, width, height, -1);
+}
+
+function frameBoundaryCornersBetween(startPosition, endPosition, width, height, direction) {
+  const perimeter = 2 * (width + height);
+  const corners = [
+    { position: 0, point: [0, 0] },
+    { position: width, point: [width, 0] },
+    { position: width + height, point: [width, height] },
+    { position: width + height + width, point: [0, height] },
+  ];
+
+  return corners
+    .filter((corner) => isBoundaryPositionBetween(corner.position, startPosition, endPosition, perimeter, direction))
+    .sort((a, b) => boundaryDistanceFromStart(a.position, startPosition, perimeter, direction) - boundaryDistanceFromStart(b.position, startPosition, perimeter, direction))
+    .map((corner) => corner.point);
+}
+
+function isBoundaryPositionBetween(position, start, end, perimeter, direction) {
+  const total = boundaryDistanceFromStart(end, start, perimeter, direction);
+  const distance = boundaryDistanceFromStart(position, start, perimeter, direction);
+  return distance > 0 && distance < total;
+}
+
+function boundaryDistanceFromStart(position, start, perimeter, direction) {
+  if (direction === 1) return (position - start + perimeter) % perimeter;
+  return (start - position + perimeter) % perimeter;
+}
+
+function frameBoundaryPosition(point, width, height) {
+  const [x, y] = point;
+  if (y === 0) return x;
+  if (x === width) return width + y;
+  if (y === height) return width + height + (width - x);
+  return width + height + width + (height - y);
+}
+
+function cancelPendingPoints() {
+  state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeNetPoints = [];
+  state.activeBallDrag = null;
+  render();
+}
+
+function handleCanvasPointerMove(event) {
+  const localPoint = getCanvasLocalPoint(event);
+  const point = canvasPointToVideoPoint(localPoint.x, localPoint.y);
+
+  if (state.activeBallDrag && state.activeBallDrag.pointerId === event.pointerId) {
+    state.activeBallDrag.current = point;
+    render();
+    return;
+  }
+
+  if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
+    state.activeTablePointDrag.table.polygon[state.activeTablePointDrag.pointIndex] = [
+      round(point.x),
+      round(point.y),
+    ];
+    render();
+    return;
+  }
+}
+
+function handleCanvasPointerUp(event) {
+  if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
+    state.activeTablePointDrag = null;
+    elements.canvas.releasePointerCapture(event.pointerId);
+    interpolateTableLabels();
+    cleanupEmptyFrames();
+    render();
+    return;
+  }
+
+  if (!state.activeBallDrag || state.activeBallDrag.pointerId !== event.pointerId) return;
+
+  const drag = state.activeBallDrag;
+  state.activeBallDrag = null;
+  elements.canvas.releasePointerCapture(event.pointerId);
+
+  const ball = ballFromDrag(drag.start, drag.current);
+  if (!ball) {
+    render();
+    return;
+  }
+
+  pushHistory("draw-ball");
+  const frameLabel = getOrCreateFrameLabel(drag.frame);
+  upsertObject(frameLabel, {
+    type: "ball",
+    center: ball.center,
+    bbox: ball.bbox,
+    occluded: elements.occludedInput.checked,
+    blurred: elements.blurredInput.checked,
+    interpolated: false,
+  });
+  interpolateBallLabels();
+  cleanupEmptyFrames();
+  render();
+}
+
+function cancelBallDrag(event) {
+  if (state.activeBallDrag && state.activeBallDrag.pointerId === event.pointerId) {
+    state.activeBallDrag = null;
+    render();
+  }
+  if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
+    state.activeTablePointDrag = null;
+    render();
+  }
+}
+
+function ballFromDrag(start, end) {
+  const left = Math.min(start.x, end.x);
+  const right = Math.max(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const bottom = Math.max(start.y, end.y);
+  const width = right - left;
+  const height = bottom - top;
+
+  if (width < 2 || height < 2) return null;
+
+  return {
+    center: [round(left + width / 2), round(top + height / 2)],
+    bbox: [round(left), round(top), round(width), round(height)],
+  };
 }
 
 function addEvent(type) {
@@ -285,14 +610,22 @@ function addEvent(type) {
   pushHistory(`event-${type}`);
   const frame = getCurrentFrame();
   const timeMs = getCurrentTimeMs();
-  state.annotations.events.push({
+  const existing = state.annotations.events.find((event) => event.frame === frame && event.type === type);
+  const eventLabel = {
     type,
     frame,
     timeMs,
     windowFrames: [Math.max(0, frame - 2), frame + 2],
     confidence: 1,
     notes: "",
-  });
+  };
+
+  if (existing) {
+    Object.assign(existing, eventLabel);
+  } else {
+    state.annotations.events.push(eventLabel);
+  }
+
   state.annotations.events.sort((a, b) => a.frame - b.frame || a.type.localeCompare(b.type));
   render();
 }
@@ -303,8 +636,132 @@ function clearCurrentFrame() {
   state.annotations.frames = state.annotations.frames.filter((item) => item.frame !== frame);
   state.annotations.events = state.annotations.events.filter((item) => item.frame !== frame);
   state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   render();
+}
+
+function interpolateBallLabels() {
+  removeInterpolatedBallLabels();
+
+  const keyedFrames = state.annotations.frames
+    .map((frameLabel) => ({
+      frameLabel,
+      ball: frameLabel.objects.find((object) => object.type === "ball" && !object.interpolated),
+    }))
+    .filter((item) => item.ball)
+    .sort((a, b) => a.frameLabel.frame - b.frameLabel.frame);
+
+  if (keyedFrames.length < 2) {
+    return;
+  }
+
+  for (let index = 0; index < keyedFrames.length - 1; index += 1) {
+    const start = keyedFrames[index];
+    const end = keyedFrames[index + 1];
+    const startFrame = start.frameLabel.frame;
+    const endFrame = end.frameLabel.frame;
+    const gap = endFrame - startFrame;
+
+    if (gap <= 1) continue;
+
+    for (let frame = startFrame + 1; frame < endFrame; frame += 1) {
+      const frameLabel = getOrCreateFrameLabel(frame);
+      const hasBall = frameLabel.objects.some((object) => object.type === "ball");
+      if (hasBall) continue;
+
+      const ratio = (frame - startFrame) / gap;
+      const center = [
+        round(lerp(start.ball.center[0], end.ball.center[0], ratio)),
+        round(lerp(start.ball.center[1], end.ball.center[1], ratio)),
+      ];
+      const startBox = getBallBbox(start.ball);
+      const endBox = getBallBbox(end.ball);
+      const bbox = [
+        round(lerp(startBox[0], endBox[0], ratio)),
+        round(lerp(startBox[1], endBox[1], ratio)),
+        round(lerp(startBox[2], endBox[2], ratio)),
+        round(lerp(startBox[3], endBox[3], ratio)),
+      ];
+
+      frameLabel.objects.push({
+        type: "ball",
+        center,
+        bbox,
+        occluded: Boolean(start.ball.occluded && end.ball.occluded),
+        blurred: Boolean(start.ball.blurred || end.ball.blurred),
+        interpolated: true,
+      });
+      frameLabel.timeMs = Math.round((frame / state.fps) * 1000);
+    }
+  }
+
+  cleanupEmptyFrames();
+}
+
+function interpolateTableLabels() {
+  removeInterpolatedTableLabels();
+
+  const keyedFrames = state.annotations.frames
+    .map((frameLabel) => ({
+      frameLabel,
+      table: frameLabel.objects.find((object) => object.type === "table" && !object.interpolated),
+    }))
+    .filter((item) => item.table)
+    .sort((a, b) => a.frameLabel.frame - b.frameLabel.frame);
+
+  if (keyedFrames.length < 2) return;
+
+  for (let index = 0; index < keyedFrames.length - 1; index += 1) {
+    const start = keyedFrames[index];
+    const end = keyedFrames[index + 1];
+    if (start.table.polygon.length !== end.table.polygon.length) continue;
+
+    const startFrame = start.frameLabel.frame;
+    const endFrame = end.frameLabel.frame;
+    const gap = endFrame - startFrame;
+    if (gap <= 1) continue;
+
+    for (let frame = startFrame + 1; frame < endFrame; frame += 1) {
+      const frameLabel = getOrCreateFrameLabel(frame);
+      const hasTable = frameLabel.objects.some((object) => object.type === "table");
+      if (hasTable) continue;
+
+      const ratio = (frame - startFrame) / gap;
+      frameLabel.objects.push({
+        type: "table",
+        polygon: start.table.polygon.map((point, pointIndex) => [
+          round(lerp(point[0], end.table.polygon[pointIndex][0], ratio)),
+          round(lerp(point[1], end.table.polygon[pointIndex][1], ratio)),
+        ]),
+        interpolated: true,
+      });
+      frameLabel.timeMs = Math.round((frame / state.fps) * 1000);
+    }
+  }
+
+  cleanupEmptyFrames();
+}
+
+function removeInterpolatedBallLabels() {
+  state.annotations.frames.forEach((frameLabel) => {
+    frameLabel.objects = frameLabel.objects.filter(
+      (object) => object.type !== "ball" || !object.interpolated,
+    );
+  });
+}
+
+function removeInterpolatedTableLabels() {
+  state.annotations.frames.forEach((frameLabel) => {
+    frameLabel.objects = frameLabel.objects.filter(
+      (object) => object.type !== "table" || !object.interpolated,
+    );
+  });
+}
+
+function lerp(start, end, ratio) {
+  return start + (end - start) * ratio;
 }
 
 function newSession() {
@@ -315,6 +772,8 @@ function newSession() {
   state.annotations = createEmptyAnnotations();
   state.annotations.video = { ...state.annotations.video, ...video };
   state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   render();
 }
@@ -325,6 +784,8 @@ function undo() {
 
   state.annotations = JSON.parse(snapshot);
   state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   render();
 }
@@ -362,12 +823,53 @@ function cleanupEmptyFrames() {
   state.annotations.frames = state.annotations.frames.filter((frame) => frame.objects.length > 0);
 }
 
-function downloadAnnotations() {
+async function chooseAnnotationSaveFolder() {
+  if (!window.showDirectoryPicker) {
+    window.alert("This browser cannot save directly to a project folder. Chrome supports this feature.");
+    return;
+  }
+
+  try {
+    state.annotationDirectoryHandle = await window.showDirectoryPicker({
+      id: "ar-ping-pong-annotations",
+      mode: "readwrite",
+    });
+    updateSaveStatus(`Saving to ${state.annotationDirectoryHandle.name}/`);
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      window.alert(`Could not choose save folder: ${error.message}`);
+    }
+  }
+}
+
+async function downloadAnnotations() {
   const filename = `${state.annotations.video.id || "annotations"}.labels.json`;
   const blob = new Blob([JSON.stringify(state.annotations, null, 2)], {
     type: "application/json",
   });
+
+  if (state.annotationDirectoryHandle) {
+    try {
+      const fileHandle = await state.annotationDirectoryHandle.getFileHandle(filename, {
+        create: true,
+      });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      updateSaveStatus(`Saved ${filename}`);
+      return;
+    } catch (error) {
+      updateSaveStatus("Folder save failed; downloaded instead");
+      window.alert(`Could not save to selected folder, using download fallback: ${error.message}`);
+    }
+  }
+
   downloadBlob(blob, filename);
+  updateSaveStatus(`Downloaded ${filename}`);
+}
+
+function updateSaveStatus(message) {
+  elements.saveStatus.textContent = message;
 }
 
 function exportCurrentFrame() {
@@ -399,6 +901,7 @@ function downloadBlob(blob, filename) {
 }
 
 function render() {
+  renderViewportTransform();
   resizeCanvasToVideo();
   drawOverlay();
   renderReadout();
@@ -406,15 +909,23 @@ function render() {
   renderEventList();
 }
 
+function renderViewportTransform() {
+  elements.viewport.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  elements.zoomOutButton.disabled = state.zoom <= 1;
+  elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
+  elements.finishTableButton.disabled = state.activeTablePoints.length < 3;
+}
+
 function resizeCanvasToVideo() {
   const video = elements.video;
   if (!video.videoWidth || !video.videoHeight) return;
 
-  const rect = video.getBoundingClientRect();
-  elements.canvas.width = Math.round(rect.width);
-  elements.canvas.height = Math.round(rect.height);
-  elements.canvas.style.width = `${rect.width}px`;
-  elements.canvas.style.height = `${rect.height}px`;
+  const width = video.clientWidth;
+  const height = video.clientHeight;
+  elements.canvas.width = Math.round(width);
+  elements.canvas.height = Math.round(height);
+  elements.canvas.style.width = `${width}px`;
+  elements.canvas.style.height = `${height}px`;
 }
 
 function drawOverlay() {
@@ -425,32 +936,47 @@ function drawOverlay() {
     frameLabel.objects.forEach(drawObject);
   }
 
-  drawPendingPoints(state.activeTablePoints, "#34d399");
+  drawPendingPolygon(state.activeTablePoints, "#34d399");
   drawPendingPoints(state.activeNetPoints, "#f8fafc");
+  drawActiveBallDrag();
 }
 
 function drawObject(object) {
   if (object.type === "ball") drawBall(object);
-  if (object.type === "table") drawPolygon(object.polygon, "#34d399");
+  if (object.type === "table") drawTable(object);
   if (object.type === "net") drawLine(object.line, "#f8fafc");
 }
 
+function drawTable(table) {
+  drawPolygon(table.polygon, "#34d399");
+  table.polygon.forEach(([x, y]) => {
+    const point = videoPointToCanvasPoint(x, y);
+    ctx.save();
+    ctx.fillStyle = table.interpolated ? "rgba(52, 211, 153, 0.5)" : "#34d399";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, table.interpolated ? 3 : 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
 function drawBall(ball) {
-  const point = videoPointToCanvasPoint(ball.center[0], ball.center[1]);
-  const radius = videoLengthToCanvasLength(ball.radius || estimateBallRadius());
+  const bbox = getBallBbox(ball);
+  const start = videoPointToCanvasPoint(bbox[0], bbox[1]);
+  const end = videoPointToCanvasPoint(bbox[0] + bbox[2], bbox[1] + bbox[3]);
+  const width = end.x - start.x;
+  const height = end.y - start.y;
 
   ctx.save();
-  ctx.strokeStyle = ball.occluded ? "#ffc857" : "#ff6b6b";
-  ctx.fillStyle = "rgba(255, 107, 107, 0.18)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  ctx.strokeStyle = ball.occluded ? "rgba(255, 200, 87, 0.28)" : "rgba(255, 107, 107, 0.24)";
+  ctx.fillStyle = ball.occluded ? "rgba(255, 200, 87, 0.14)" : "rgba(255, 107, 107, 0.12)";
+  ctx.lineWidth = 0.75;
+  ctx.fillRect(start.x, start.y, width, height);
+  ctx.strokeRect(start.x, start.y, width, height);
   ctx.restore();
 }
 
-function drawPolygon(points, color) {
+function drawPolygon(points, color, closed = true) {
   if (!points || points.length < 2) return;
 
   ctx.save();
@@ -463,8 +989,10 @@ function drawPolygon(points, color) {
     if (index === 0) ctx.moveTo(point.x, point.y);
     else ctx.lineTo(point.x, point.y);
   });
-  if (points.length >= 3) ctx.closePath();
-  ctx.fill();
+  if (closed && points.length >= 3) {
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.stroke();
   ctx.restore();
 }
@@ -496,6 +1024,27 @@ function drawPendingPoints(points, color) {
   });
 }
 
+function drawPendingPolygon(points, color) {
+  if (points.length > 1) {
+    drawPolygon(points, color, false);
+  }
+  drawPendingPoints(points, color);
+}
+
+function drawActiveBallDrag() {
+  if (!state.activeBallDrag) return;
+
+  const ball = ballFromDrag(state.activeBallDrag.start, state.activeBallDrag.current);
+  if (!ball) return;
+
+  drawBall({
+    type: "ball",
+    center: ball.center,
+    bbox: ball.bbox,
+    occluded: elements.occludedInput.checked,
+  });
+}
+
 function renderReadout() {
   const frame = getCurrentFrame();
   const timeMs = getCurrentTimeMs();
@@ -505,7 +1054,7 @@ function renderReadout() {
   elements.frameInput.value = String(frame);
   elements.timeline.value = String(elements.video.currentTime || 0);
   elements.timeline.max = String(elements.video.duration || 0);
-  elements.timeReadout.textContent = `${formatTime(timeMs)} / ${formatTime(durationMs)} / frame ${frame}`;
+  elements.timeReadout.textContent = `${formatTime(timeMs)} / ${formatTime(durationMs)} / frame ${frame} / ${state.zoom.toFixed(2)}x`;
 }
 
 function renderFrameSummary() {
@@ -565,9 +1114,11 @@ function renderEventList() {
 
 function summarizeObject(object) {
   if (object.type === "ball") {
-    return `${object.center[0]}, ${object.center[1]} r${object.radius}`;
+    const suffix = object.interpolated ? " interp" : "";
+    const bbox = getBallBbox(object);
+    return `${bbox[0]}, ${bbox[1]} ${bbox[2]}x${bbox[3]}${suffix}`;
   }
-  if (object.type === "table") return `${object.polygon.length} pts`;
+  if (object.type === "table") return `${object.polygon.length} pts${object.interpolated ? " interp" : ""}`;
   if (object.type === "net") return "2 pts";
   return "";
 }
@@ -589,11 +1140,31 @@ function estimateBallRadius() {
   return Math.max(4, Math.round(width * 0.006));
 }
 
+function getBallBbox(ball) {
+  if (ball.bbox) return ball.bbox;
+
+  const radius = ball.radius || estimateBallRadius();
+  return [
+    round(ball.center[0] - radius),
+    round(ball.center[1] - radius),
+    round(radius * 2),
+    round(radius * 2),
+  ];
+}
+
 function canvasPointToVideoPoint(x, y) {
   const video = elements.video;
   return {
     x: x * (video.videoWidth / elements.canvas.width),
     y: y * (video.videoHeight / elements.canvas.height),
+  };
+}
+
+function getCanvasLocalPoint(event) {
+  const rect = elements.canvas.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * elements.canvas.width,
+    y: ((event.clientY - rect.top) / rect.height) * elements.canvas.height,
   };
 }
 

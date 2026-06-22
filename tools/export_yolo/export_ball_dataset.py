@@ -20,9 +20,10 @@ class BallLabel:
     video_path: Path
     video_id: str
     frame: int
-    center_x: float
-    center_y: float
-    radius: float
+    x: float
+    y: float
+    width: float
+    height: float
     occluded: bool
     blurred: bool
 
@@ -85,7 +86,7 @@ def parse_args() -> argparse.Namespace:
         "--min-radius",
         type=float,
         default=2.0,
-        help="Minimum source-video-pixel ball radius to export. Default: 2.",
+        help="Minimum half-size of the larger ball box dimension to export. Default: 2.",
     )
     parser.add_argument(
         "--clean",
@@ -194,16 +195,17 @@ def collect_ball_labels(
             if not parsed:
                 continue
 
-            center_x, center_y, radius = parsed
+            x, y, width, height = parsed
             labels.append(
                 BallLabel(
                     annotation_path=annotation_path,
                     video_path=video_path,
                     video_id=video_id,
                     frame=frame,
-                    center_x=center_x,
-                    center_y=center_y,
-                    radius=radius,
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
                     occluded=bool(ball.get("occluded")),
                     blurred=bool(ball.get("blurred")),
                 )
@@ -234,20 +236,20 @@ def find_video_path(video_filename: str, videos_dir: Path, annotation_path: Path
     return None
 
 
-def parse_ball(ball: dict[str, Any], min_radius: float) -> tuple[float, float, float] | None:
-    if "center" in ball and "radius" in ball:
-        center = ball["center"]
-        radius = float(ball["radius"])
-        if radius < min_radius:
-            return None
-        return float(center[0]), float(center[1]), radius
-
+def parse_ball(ball: dict[str, Any], min_radius: float) -> tuple[float, float, float, float] | None:
     if "bbox" in ball:
         x, y, width, height = [float(value) for value in ball["bbox"]]
         radius = max(width, height) / 2
         if radius < min_radius:
             return None
-        return x + width / 2, y + height / 2, radius
+        return x, y, width, height
+
+    if "center" in ball and "radius" in ball:
+        center = ball["center"]
+        radius = float(ball["radius"])
+        if radius < min_radius:
+            return None
+        return float(center[0]) - radius, float(center[1]) - radius, radius * 2, radius * 2
 
     return None
 
@@ -344,10 +346,10 @@ def write_image(path: Path, frame: Any, args: argparse.Namespace) -> None:
 
 
 def write_yolo_label(path: Path, label: BallLabel, width: int, height: int) -> None:
-    x1 = max(0.0, label.center_x - label.radius)
-    y1 = max(0.0, label.center_y - label.radius)
-    x2 = min(float(width), label.center_x + label.radius)
-    y2 = min(float(height), label.center_y + label.radius)
+    x1 = max(0.0, label.x)
+    y1 = max(0.0, label.y)
+    x2 = min(float(width), label.x + label.width)
+    y2 = min(float(height), label.y + label.height)
 
     box_width = max(1.0, x2 - x1)
     box_height = max(1.0, y2 - y1)

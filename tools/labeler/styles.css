@@ -106,6 +106,12 @@ h1 {
   font-weight: 750;
 }
 
+.save-status {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .file-button input {
   position: absolute;
   inset: 0;
@@ -156,6 +162,15 @@ h1 {
   background: #020407;
 }
 
+.viewport {
+  position: relative;
+  display: grid;
+  place-items: center;
+  max-width: 100%;
+  max-height: 74vh;
+  transform-origin: center center;
+}
+
 video,
 canvas {
   max-width: 100%;
@@ -172,6 +187,7 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   cursor: crosshair;
+  touch-action: none;
 }
 
 .timeline {

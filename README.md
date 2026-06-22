@@ -41,7 +41,7 @@ preparing POV ping pong datasets before the display glasses are available.
 Use it to:
 
 - Load a local video from `data/videos/` or anywhere on disk.
-- Step through frames and label ball center/radius, table polygon, and net line.
+- Step through frames and label ball boxes, table polygon, and net line.
 - Mark referee events such as point start, bounce, paddle contact, net hit, point
   end, and uncertain frames.
 - Save/load annotation JSON sidecars.
@@ -60,6 +60,15 @@ Labeler shortcuts:
 
 - `Space`: play/pause
 - `,` / `.`: previous/next frame
+- `Left` / `Right`: previous/next frame
+- `Up` / `Down`: zoom in/out
+- `+` / `-`: zoom in/out
+- `0`: reset zoom and pan
+- `Shift` + arrows: pan while zoomed
+- Drag on the video: draw the current ball bounding box
+- `Enter`: finish a table polygon with three or more points
+- `Escape`: cancel pending table/net points
+- Drag table vertices: correct saved table polygon points
 - `B`: ball tool
 - `T`: table tool
 - `N`: net tool
@@ -68,6 +77,11 @@ Labeler shortcuts:
 - `U`: undo
 - `Delete`: clear current frame
 - `Cmd/Ctrl+S`: save annotation JSON
+
+In Chrome, click `Save Folder` and choose `data/annotations/` before labeling.
+After that, `Save JSON` or `Cmd/Ctrl+S` writes the current `.labels.json` file
+directly into that folder. If direct folder saving is unavailable, the labeler
+falls back to downloading the JSON file.
 
 ## Ball Detection Training Pipeline
 
@@ -144,6 +158,15 @@ alone.
 - `L`: add point for player B
 - `U`: undo the last point
 - `R`: reset the current game
+
+For cropped tables, start the table polygon at one point where the table leaves
+the video frame and end at the other frame-edge exit point. When both endpoints
+are near the frame boundary, the labeler closes the polygon along the video edge
+and inserts any needed frame corners automatically.
+
+Table labels auto-interpolate between manual keyframes when both table polygons
+have the same number of points. If the point counts differ, that gap is skipped
+so the labeler does not guess the wrong vertex correspondence.
 
 ## Product Roadmap
 

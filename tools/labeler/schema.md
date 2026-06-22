@@ -33,7 +33,7 @@ Frame labels are sparse. Only frames with labels are present.
     {
       "type": "ball",
       "center": [921, 451],
-      "radius": 9,
+      "bbox": [912, 442, 18, 18],
       "occluded": false,
       "blurred": true
     },
@@ -49,7 +49,14 @@ Frame labels are sparse. Only frames with labels are present.
 }
 ```
 
-Coordinates are stored in source video pixels, not canvas pixels.
+Coordinates are stored in source video pixels, not canvas pixels. Ball labels
+store both `bbox` and `center` when possible: `bbox` is the training label for
+object detection, while `center` remains useful for tracking and event logic.
+Table labels are polygons with three or more points; include image-edge points
+when the physical table is cropped by the camera frame. The labeler can infer
+frame-corner points when the first and last table polygon points are near the
+video boundary. Interpolated table labels are generated only between manual
+table polygons with matching point counts.
 
 ## Event Labels
 

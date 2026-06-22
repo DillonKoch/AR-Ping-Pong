@@ -21,7 +21,9 @@
           Labels
           <input id="annotationInput" type="file" accept="application/json,.json">
         </label>
+        <button id="chooseSaveFolderButton" type="button">Save Folder</button>
         <button id="downloadButton" type="button">Save JSON</button>
+        <span id="saveStatus" class="save-status">Downloads fallback</span>
       </div>
     </header>
 
@@ -31,6 +33,9 @@
           <button id="playButton" type="button">Play</button>
           <button id="prevFrameButton" type="button">Prev Frame</button>
           <button id="nextFrameButton" type="button">Next Frame</button>
+          <button id="zoomOutButton" type="button">Zoom -</button>
+          <button id="zoomInButton" type="button">Zoom +</button>
+          <button id="resetViewButton" type="button">Reset View</button>
           <label>
             FPS
             <input id="fpsInput" type="number" min="1" max="240" step="1" value="30">
@@ -44,8 +49,10 @@
         </div>
 
         <div class="stage-wrap">
-          <video id="video" playsinline></video>
-          <canvas id="overlay" aria-label="Annotation canvas"></canvas>
+          <div id="viewport" class="viewport">
+            <video id="video" playsinline></video>
+            <canvas id="overlay" aria-label="Annotation canvas"></canvas>
+          </div>
         </div>
 
         <div class="timeline">
@@ -105,6 +112,7 @@
           <h2>Actions</h2>
           <div class="action-grid">
             <button id="undoButton" type="button">Undo</button>
+            <button id="finishTableButton" type="button">Finish Table</button>
             <button id="clearFrameButton" type="button">Clear Frame</button>
             <button id="newSessionButton" type="button">New Session</button>
           </div>
@@ -114,7 +122,12 @@
 
     <footer class="shortcut-bar">
       <span>Space play/pause</span>
-      <span>, . frame step</span>
+      <span>Left/Right frame step</span>
+      <span>+ - zoom</span>
+      <span>Shift+arrows pan</span>
+      <span>Drag ball box</span>
+      <span>Enter finish table</span>
+      <span>Esc cancel points</span>
       <span>B ball</span>
       <span>T table</span>
       <span>N net</span>

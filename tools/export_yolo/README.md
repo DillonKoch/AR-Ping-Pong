@@ -43,6 +43,9 @@ Each YOLO label line is:
 
 Coordinates are normalized to `[0, 1]`.
 
+Ball labels with `bbox` are exported as rectangular boxes. Older `center` plus
+`radius` labels are still supported and exported as square boxes.
+
 ## Train
 
 ```bash
