@@ -60,6 +60,7 @@ const elements = {
   blurredInput: document.querySelector("#blurredInput"),
   undoButton: document.querySelector("#undoButton"),
   finishTableButton: document.querySelector("#finishTableButton"),
+  closeTableEdgeButton: document.querySelector("#closeTableEdgeButton"),
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
   predictionStatus: document.querySelector("#predictionStatus"),
@@ -102,6 +103,7 @@ elements.video.addEventListener("play", render);
 elements.video.addEventListener("pause", render);
 elements.undoButton.addEventListener("click", undo);
 elements.finishTableButton.addEventListener("click", finishTablePolygon);
+elements.closeTableEdgeButton.addEventListener("click", closeCurrentTableAlongFrameEdge);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
 elements.acceptPredictionButton.addEventListener("click", acceptCurrentTablePrediction);
@@ -461,6 +463,7 @@ function handleKeydown(event) {
   if (key === "t") setTool("table");
   if (key === "n") setTool("net");
   if (key === "v") setTool("select");
+  if (key === "c") closeCurrentTableAlongFrameEdge();
   if (key === "u") undo();
   if (key === "backspace" || key === "delete") clearCurrentFrame();
   if (eventHotkeys[key]) addEvent(eventHotkeys[key]);
@@ -599,14 +602,37 @@ function finishTablePolygon() {
   render();
 }
 
-function completeTablePolygon(points) {
+function closeCurrentTableAlongFrameEdge() {
+  const frameLabel = getFrameLabel(getCurrentFrame());
+  const table = frameLabel?.objects.find((object) => object.type === "table");
+  if (!table) return;
+
+  const sourcePoints = table.boundaryClose?.sourcePoints || table.polygon;
+  const completed = completeTablePolygon(sourcePoints, { marginRatio: 0.08 });
+  if (!completed.boundaryClose) {
+    window.alert("The first and last table points need to be near the video edge before Close Edge can follow the frame boundary.");
+    return;
+  }
+
+  pushHistory("close-table-edge");
+  Object.assign(table, {
+    ...completed,
+    interpolated: false,
+  });
+  interpolateTableLabels();
+  cleanupEmptyFrames();
+  render();
+}
+
+function completeTablePolygon(points, options = {}) {
   if (points.length < 3) return { polygon: [...points] };
 
   const width = state.annotations.video.width || elements.video.videoWidth;
   const height = state.annotations.video.height || elements.video.videoHeight;
   if (!width || !height) return { polygon: [...points] };
 
-  const margin = Math.max(12, Math.min(width, height) * 0.03);
+  const marginRatio = options.marginRatio ?? 0.03;
+  const margin = Math.max(12, Math.min(width, height) * marginRatio);
   const first = snapPointToFrameEdge(points[0], width, height, margin);
   const last = snapPointToFrameEdge(points[points.length - 1], width, height, margin);
 
@@ -1213,6 +1239,7 @@ function renderViewportTransform() {
   elements.zoomOutButton.disabled = state.zoom <= 1;
   elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
   elements.finishTableButton.disabled = state.activeTablePoints.length < 3;
+  elements.closeTableEdgeButton.disabled = !getFrameLabel(getCurrentFrame())?.objects.some((object) => object.type === "table");
 }
 
 function resizeCanvasToVideo() {

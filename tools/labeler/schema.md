@@ -59,6 +59,11 @@ video boundary, preferring the bottom portion of the frame for near-side cropped
 tables. Interpolated table labels are generated only between manual table
 polygons with matching point counts.
 
+If a cropped table closes with a bad diagonal across the frame, use the labeler's
+`Close Edge` action on that frame. It snaps the first and last table polygon
+points to nearby video edges and inserts any frame-corner points needed to close
+the table along the image boundary.
+
 ## Event Labels
 
 Events are frame-anchored and can include an uncertainty window.
