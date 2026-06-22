@@ -69,6 +69,10 @@ exact edge, and points clicked near an image corner snap to the exact corner.
 This makes it reasonable to label offscreen table regions by tracing the visible
 table boundary and then continuing around the video frame boundary.
 
+If three or more table points are already on the image boundary, the labeler
+treats the polygon as an explicit frame-boundary mask and does not infer a
+different cropped-table closure on finish.
+
 ## Event Labels
 
 Events are frame-anchored and can include an uncertainty window.

@@ -608,7 +608,7 @@ function closeCurrentTableAlongFrameEdge() {
   if (!table) return;
 
   const sourcePoints = table.boundaryClose?.sourcePoints || table.polygon;
-  const completed = completeTablePolygon(sourcePoints, { marginRatio: 0.08 });
+  const completed = completeTablePolygon(sourcePoints, { forceBoundaryClose: true, marginRatio: 0.08 });
   if (!completed.boundaryClose) {
     window.alert("The first and last table points need to be near the video edge before Close Edge can follow the frame boundary.");
     return;
@@ -633,6 +633,9 @@ function completeTablePolygon(points, options = {}) {
 
   const marginRatio = options.marginRatio ?? 0.03;
   const margin = Math.max(12, Math.min(width, height) * marginRatio);
+  if (!options.forceBoundaryClose && countFrameBoundaryPoints(points, width, height, margin) >= 3) {
+    return { polygon: [...points] };
+  }
   const first = snapPointToFrameEdge(points[0], width, height, margin);
   const last = snapPointToFrameEdge(points[points.length - 1], width, height, margin);
 
@@ -672,6 +675,10 @@ function snapTablePoint(point) {
   const edgeMargin = Math.max(12, Math.min(width, height) * 0.025);
   const edge = snapPointToFrameEdge(point, width, height, edgeMargin);
   return edge ? edge.point : point;
+}
+
+function countFrameBoundaryPoints(points, width, height, margin) {
+  return points.filter((point) => snapPointToFrameEdge(point, width, height, margin)).length;
 }
 
 function snapPointToFrameEdge(point, width, height, margin) {
