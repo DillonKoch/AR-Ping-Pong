@@ -44,6 +44,10 @@ Frame labels are sparse. Only frames with labels are present.
     {
       "type": "net",
       "line": [[598, 456], [932, 466], [1267, 446]]
+    },
+    {
+      "type": "table",
+      "absent": true
     }
   ]
 }
@@ -62,6 +66,10 @@ Net labels are two- or three-point polylines. Use three points when the net has
 a visible sag: left endpoint, midpoint/dip, right endpoint. Interpolated net
 labels are generated between manual net lines, and are marked with
 `"interpolated": true`.
+
+Any object type can be marked absent with `"absent": true`. Absent objects are
+manual off keyframes: they are not drawn or exported, and they stop interpolation
+from filling that object type across the frame.
 
 If a cropped table closes with a bad diagonal across the frame, use the labeler's
 `Close Edge` action on that frame. It snaps the first and last table polygon

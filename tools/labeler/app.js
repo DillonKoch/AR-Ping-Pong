@@ -598,7 +598,7 @@ function handleCanvasPointerDown(event) {
 
 function findNearestTablePoint(frame, canvasX, canvasY) {
   const frameLabel = getFrameLabel(frame);
-  const table = frameLabel?.objects.find((object) => object.type === "table");
+  const table = frameLabel?.objects.find((object) => object.type === "table" && !object.absent);
   if (!table) return null;
 
   let nearest = null;
@@ -615,7 +615,7 @@ function findNearestTablePoint(frame, canvasX, canvasY) {
 
 function findNearestNetPoint(frame, canvasX, canvasY) {
   const frameLabel = getFrameLabel(frame);
-  const net = frameLabel?.objects.find((object) => object.type === "net");
+  const net = frameLabel?.objects.find((object) => object.type === "net" && !object.absent);
   if (!net || !Array.isArray(net.line)) return null;
 
   let nearest = null;
@@ -680,7 +680,7 @@ function finishNetLine({ shouldRender = true } = {}) {
 
 function closeCurrentTableAlongFrameEdge() {
   const frameLabel = getFrameLabel(getCurrentFrame());
-  const table = frameLabel?.objects.find((object) => object.type === "table");
+  const table = frameLabel?.objects.find((object) => object.type === "table" && !object.absent);
   if (!table) return;
 
   const sourcePoints = table.boundaryClose?.sourcePoints || table.polygon;
@@ -986,25 +986,29 @@ function clearCurrentFrame() {
 
 function clearCurrentObject(type) {
   const frame = getCurrentFrame();
-  const frameLabel = getFrameLabel(frame);
-  const hasObject = frameLabel?.objects.some((object) => object.type === type);
-  if (!hasObject) return;
+  const frameLabel = getOrCreateFrameLabel(frame);
+  const isAlreadyAbsent = frameLabel.objects.some((object) => object.type === type && object.absent);
+  if (isAlreadyAbsent) return;
 
   pushHistory(`clear-${type}`);
   frameLabel.objects = frameLabel.objects.filter((object) => object.type !== type);
+  frameLabel.objects.push(createAbsentObject(type));
   clearActiveObjectState(type);
 
   if (type === "ball") interpolateBallLabels();
   if (type === "table") interpolateTableLabels();
   if (type === "net") interpolateNetLabels();
 
-  const refreshedFrameLabel = getFrameLabel(frame);
-  if (refreshedFrameLabel) {
-    refreshedFrameLabel.objects = refreshedFrameLabel.objects.filter((object) => object.type !== type);
-  }
-
   cleanupEmptyFrames();
   render();
+}
+
+function createAbsentObject(type) {
+  return {
+    type,
+    absent: true,
+    interpolated: false,
+  };
 }
 
 function clearActiveObjectState(type) {
@@ -1072,6 +1076,7 @@ function interpolateBallLabels() {
   for (let index = 0; index < keyedFrames.length - 1; index += 1) {
     const start = keyedFrames[index];
     const end = keyedFrames[index + 1];
+    if (start.ball.absent || end.ball.absent) continue;
     const startFrame = start.frameLabel.frame;
     const endFrame = end.frameLabel.frame;
     const gap = endFrame - startFrame;
@@ -1128,6 +1133,7 @@ function interpolateTableLabels() {
   for (let index = 0; index < keyedFrames.length - 1; index += 1) {
     const start = keyedFrames[index];
     const end = keyedFrames[index + 1];
+    if (start.table.absent || end.table.absent) continue;
     if (start.table.polygon.length !== end.table.polygon.length) continue;
 
     const startFrame = start.frameLabel.frame;
@@ -1164,7 +1170,7 @@ function interpolateNetLabels() {
       frameLabel,
       net: frameLabel.objects.find((object) => object.type === "net" && !object.interpolated),
     }))
-    .filter((item) => item.net && isValidNetLine(item.net.line))
+    .filter((item) => item.net && (item.net.absent || isValidNetLine(item.net.line)))
     .sort((a, b) => a.frameLabel.frame - b.frameLabel.frame);
 
   if (keyedFrames.length < 2) return;
@@ -1172,6 +1178,7 @@ function interpolateNetLabels() {
   for (let index = 0; index < keyedFrames.length - 1; index += 1) {
     const start = keyedFrames[index];
     const end = keyedFrames[index + 1];
+    if (start.net.absent || end.net.absent) continue;
     const startFrame = start.frameLabel.frame;
     const endFrame = end.frameLabel.frame;
     const gap = endFrame - startFrame;
@@ -1493,10 +1500,11 @@ function renderViewportTransform() {
   elements.finishTableButton.disabled = getCurrentPendingTablePoints().length < 3;
   elements.finishNetButton.disabled = getCurrentPendingNetPoints().length < 2;
   const currentObjects = getFrameLabel(getCurrentFrame())?.objects || [];
-  elements.clearBallButton.disabled = !currentObjects.some((object) => object.type === "ball");
-  elements.clearTableButton.disabled = !currentObjects.some((object) => object.type === "table");
-  elements.clearNetButton.disabled = !currentObjects.some((object) => object.type === "net");
-  elements.closeTableEdgeButton.disabled = !currentObjects.some((object) => object.type === "table");
+  const hasVideo = Boolean(elements.video.src);
+  elements.clearBallButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "ball" && object.absent);
+  elements.clearTableButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "table" && object.absent);
+  elements.clearNetButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "net" && object.absent);
+  elements.closeTableEdgeButton.disabled = !currentObjects.some((object) => object.type === "table" && !object.absent);
 }
 
 function resizeCanvasToVideo() {
@@ -1544,6 +1552,7 @@ function getCurrentPendingNetPoints() {
 }
 
 function drawObject(object) {
+  if (object.absent) return;
   if (object.type === "ball") drawBall(object);
   if (object.type === "table") drawTable(object);
   if (object.type === "net") drawNet(object);
@@ -1784,6 +1793,7 @@ function renderEventList() {
 }
 
 function summarizeObject(object) {
+  if (object.absent) return "off";
   if (object.type === "ball") {
     const suffix = object.interpolated ? " interp" : "";
     const bbox = getBallBbox(object);
