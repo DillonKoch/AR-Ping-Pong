@@ -1270,6 +1270,12 @@ function resizeCanvasToVideo() {
   const video = elements.video;
   if (!video.videoWidth || !video.videoHeight) return;
 
+  const maxHeight = Math.min(window.innerHeight * 0.78, elements.video.videoHeight);
+  const aspect = video.videoWidth / video.videoHeight;
+  const targetWidth = Math.min(elements.video.videoWidth, maxHeight * aspect);
+  elements.viewport.style.width = `${Math.round(targetWidth)}px`;
+  elements.viewport.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+
   const width = video.clientWidth;
   const height = video.clientHeight;
   elements.canvas.width = Math.round(width);
