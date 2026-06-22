@@ -11,6 +11,7 @@ const state = {
   activeTablePointDrag: null,
   activeNetPoints: [],
   activeNetFrame: null,
+  activeNetPointDrag: null,
   activeBallDrag: null,
   predictions: createEmptyPredictions(),
   showPredictions: true,
@@ -59,6 +60,7 @@ const elements = {
   blurredInput: document.querySelector("#blurredInput"),
   undoButton: document.querySelector("#undoButton"),
   finishTableButton: document.querySelector("#finishTableButton"),
+  finishNetButton: document.querySelector("#finishNetButton"),
   closeTableEdgeButton: document.querySelector("#closeTableEdgeButton"),
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
@@ -99,6 +101,7 @@ elements.video.addEventListener("play", render);
 elements.video.addEventListener("pause", render);
 elements.undoButton.addEventListener("click", undo);
 elements.finishTableButton.addEventListener("click", finishTablePolygon);
+elements.finishNetButton.addEventListener("click", finishNetLine);
 elements.closeTableEdgeButton.addEventListener("click", closeCurrentTableAlongFrameEdge);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
@@ -339,6 +342,7 @@ function applyAnnotations(parsed) {
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   state.history = [];
   interpolateBallLabels();
   interpolateTableLabels();
@@ -451,7 +455,8 @@ function handleKeydown(event) {
     resetView();
   } else if (key === "enter") {
     event.preventDefault();
-    finishTablePolygon();
+    if (state.tool === "net") finishNetLine();
+    else finishTablePolygon();
   } else if (key === "escape") {
     event.preventDefault();
     cancelPendingPoints();
@@ -474,6 +479,7 @@ function setTool(tool) {
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === tool);
   });
@@ -549,24 +555,26 @@ function handleCanvasPointerDown(event) {
   }
 
   if (state.tool === "net") {
+    const netPoint = findNearestNetPoint(frame, localPoint.x, localPoint.y);
+    if (netPoint && state.activeNetPoints.length === 0) {
+      pushHistory("drag-net-point");
+      netPoint.net.interpolated = false;
+      state.activeNetPointDrag = {
+        pointerId: event.pointerId,
+        net: netPoint.net,
+        pointIndex: netPoint.pointIndex,
+      };
+      elements.canvas.setPointerCapture(event.pointerId);
+      render();
+      return;
+    }
+
     if (state.activeNetPoints.length > 0 && state.activeNetFrame !== frame) {
       state.activeNetPoints = [];
     }
     state.activeNetFrame = frame;
     state.activeNetPoints.push([round(point.x), round(point.y)]);
-    if (state.activeNetPoints.length === 2) {
-      pushHistory("draw-net");
-      const frameLabel = getOrCreateFrameLabel(frame);
-      upsertObject(frameLabel, {
-        type: "net",
-        line: state.activeNetPoints,
-        interpolated: false,
-      });
-      state.activeNetPoints = [];
-      state.activeNetFrame = null;
-      interpolateNetLabels();
-      cleanupEmptyFrames();
-    }
+    if (state.activeNetPoints.length === 3) finishNetLine();
     render();
     return;
   }
@@ -592,6 +600,23 @@ function findNearestTablePoint(frame, canvasX, canvasY) {
   return nearest;
 }
 
+function findNearestNetPoint(frame, canvasX, canvasY) {
+  const frameLabel = getFrameLabel(frame);
+  const net = frameLabel?.objects.find((object) => object.type === "net");
+  if (!net || !Array.isArray(net.line)) return null;
+
+  let nearest = null;
+  net.line.forEach(([x, y], pointIndex) => {
+    const point = videoPointToCanvasPoint(x, y);
+    const distance = Math.hypot(point.x - canvasX, point.y - canvasY);
+    if (distance <= 14 && (!nearest || distance < nearest.distance)) {
+      nearest = { net, pointIndex, distance };
+    }
+  });
+
+  return nearest;
+}
+
 function finishTablePolygon() {
   if (state.activeTablePoints.length < 3) return;
 
@@ -605,6 +630,24 @@ function finishTablePolygon() {
   state.activeTablePoints = [];
   state.activeTableFrame = null;
   interpolateTableLabels();
+  cleanupEmptyFrames();
+  render();
+}
+
+function finishNetLine() {
+  if (state.activeNetPoints.length < 2) return;
+
+  pushHistory("draw-net");
+  const frameLabel = getOrCreateFrameLabel(state.activeNetFrame ?? getCurrentFrame());
+  upsertObject(frameLabel, {
+    type: "net",
+    line: state.activeNetPoints.map((point) => [...point]),
+    interpolated: false,
+  });
+  state.activeNetPoints = [];
+  state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
+  interpolateNetLabels();
   cleanupEmptyFrames();
   render();
 }
@@ -756,6 +799,7 @@ function cancelPendingPoints() {
   state.activeTableFrame = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   state.activeBallDrag = null;
   render();
 }
@@ -778,6 +822,15 @@ function handleCanvasPointerMove(event) {
     render();
     return;
   }
+
+  if (state.activeNetPointDrag && state.activeNetPointDrag.pointerId === event.pointerId) {
+    state.activeNetPointDrag.net.line[state.activeNetPointDrag.pointIndex] = [
+      round(point.x),
+      round(point.y),
+    ];
+    render();
+    return;
+  }
 }
 
 function handleCanvasPointerUp(event) {
@@ -785,6 +838,15 @@ function handleCanvasPointerUp(event) {
     state.activeTablePointDrag = null;
     elements.canvas.releasePointerCapture(event.pointerId);
     interpolateTableLabels();
+    cleanupEmptyFrames();
+    render();
+    return;
+  }
+
+  if (state.activeNetPointDrag && state.activeNetPointDrag.pointerId === event.pointerId) {
+    state.activeNetPointDrag = null;
+    elements.canvas.releasePointerCapture(event.pointerId);
+    interpolateNetLabels();
     cleanupEmptyFrames();
     render();
     return;
@@ -824,6 +886,10 @@ function cancelBallDrag(event) {
   }
   if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
     state.activeTablePointDrag = null;
+    render();
+  }
+  if (state.activeNetPointDrag && state.activeNetPointDrag.pointerId === event.pointerId) {
+    state.activeNetPointDrag = null;
     render();
   }
 }
@@ -882,6 +948,7 @@ function clearCurrentFrame() {
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   if (removedManualObject) {
     interpolateBallLabels();
     interpolateTableLabels();
@@ -1032,7 +1099,7 @@ function interpolateNetLabels() {
       frameLabel,
       net: frameLabel.objects.find((object) => object.type === "net" && !object.interpolated),
     }))
-    .filter((item) => item.net && Array.isArray(item.net.line) && item.net.line.length === 2)
+    .filter((item) => item.net && isValidNetLine(item.net.line))
     .sort((a, b) => a.frameLabel.frame - b.frameLabel.frame);
 
   if (keyedFrames.length < 2) return;
@@ -1045,6 +1112,10 @@ function interpolateNetLabels() {
     const gap = endFrame - startFrame;
     if (gap <= 1) continue;
 
+    const pointCount = Math.max(start.net.line.length, end.net.line.length);
+    const startLine = normalizeNetLine(start.net.line, pointCount);
+    const endLine = normalizeNetLine(end.net.line, pointCount);
+
     for (let frame = startFrame + 1; frame < endFrame; frame += 1) {
       const frameLabel = getOrCreateFrameLabel(frame);
       const hasNet = frameLabel.objects.some((object) => object.type === "net");
@@ -1053,9 +1124,9 @@ function interpolateNetLabels() {
       const ratio = (frame - startFrame) / gap;
       frameLabel.objects.push({
         type: "net",
-        line: start.net.line.map((point, pointIndex) => [
-          round(lerp(point[0], end.net.line[pointIndex][0], ratio)),
-          round(lerp(point[1], end.net.line[pointIndex][1], ratio)),
+        line: startLine.map((point, pointIndex) => [
+          round(lerp(point[0], endLine[pointIndex][0], ratio)),
+          round(lerp(point[1], endLine[pointIndex][1], ratio)),
         ]),
         interpolated: true,
       });
@@ -1064,6 +1135,21 @@ function interpolateNetLabels() {
   }
 
   cleanupEmptyFrames();
+}
+
+function isValidNetLine(line) {
+  return Array.isArray(line) && (line.length === 2 || line.length === 3);
+}
+
+function normalizeNetLine(line, pointCount) {
+  if (pointCount === 2 || line.length === pointCount) return line;
+
+  const [start, end] = line;
+  return [
+    start,
+    [round((start[0] + end[0]) / 2), round((start[1] + end[1]) / 2)],
+    end,
+  ];
 }
 
 function removeInterpolatedBallLabels() {
@@ -1106,6 +1192,7 @@ function newSession() {
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   render();
 }
 
@@ -1119,6 +1206,7 @@ function undo() {
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
   state.activeNetFrame = null;
+  state.activeNetPointDrag = null;
   render();
 }
 
@@ -1338,6 +1426,7 @@ function renderViewportTransform() {
   elements.zoomOutButton.disabled = state.zoom <= 1;
   elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
   elements.finishTableButton.disabled = state.activeTablePoints.length < 3;
+  elements.finishNetButton.disabled = state.activeNetPoints.length < 2;
   elements.closeTableEdgeButton.disabled = !getFrameLabel(getCurrentFrame())?.objects.some((object) => object.type === "table");
 }
 
@@ -1373,14 +1462,20 @@ function drawOverlay() {
   }
 
   drawPendingPolygon(state.activeTablePoints, "#34d399");
-  drawPendingPoints(state.activeNetPoints, "#f8fafc");
+  drawPendingPolyline(state.activeNetPoints, "#f8fafc");
   drawActiveBallDrag();
 }
 
 function drawObject(object) {
   if (object.type === "ball") drawBall(object);
   if (object.type === "table") drawTable(object);
-  if (object.type === "net") drawLine(object.line, "#f8fafc");
+  if (object.type === "net") drawNet(object);
+}
+
+function drawNet(net) {
+  if (!Array.isArray(net.line)) return;
+  drawLine(net.line, "#f8fafc");
+  drawPendingPoints(net.line, net.interpolated ? "rgba(248, 250, 252, 0.55)" : "#f8fafc");
 }
 
 function drawTable(table) {
@@ -1457,14 +1552,15 @@ function drawPolygon(points, color, closed = true, options = {}) {
 function drawLine(points, color) {
   if (!points || points.length < 2) return;
 
-  const start = videoPointToCanvasPoint(points[0][0], points[0][1]);
-  const end = videoPointToCanvasPoint(points[1][0], points[1][1]);
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(start.x, start.y);
-  ctx.lineTo(end.x, end.y);
+  points.forEach(([x, y], index) => {
+    const point = videoPointToCanvasPoint(x, y);
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
   ctx.stroke();
   ctx.restore();
 }
@@ -1484,6 +1580,13 @@ function drawPendingPoints(points, color) {
 function drawPendingPolygon(points, color) {
   if (points.length > 1) {
     drawPolygon(points, color, false);
+  }
+  drawPendingPoints(points, color);
+}
+
+function drawPendingPolyline(points, color) {
+  if (points.length > 1) {
+    drawLine(points, color);
   }
   drawPendingPoints(points, color);
 }
@@ -1610,7 +1713,7 @@ function summarizeObject(object) {
     return `${bbox[0]}, ${bbox[1]} ${bbox[2]}x${bbox[3]}${suffix}`;
   }
   if (object.type === "table") return `${object.polygon.length} pts${object.interpolated ? " interp" : ""}`;
-  if (object.type === "net") return `2 pts${object.interpolated ? " interp" : ""}`;
+  if (object.type === "net") return `${object.line?.length || 0} pts${object.interpolated ? " interp" : ""}`;
   return "";
 }
 
