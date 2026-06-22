@@ -90,3 +90,29 @@ Supported event types:
 
 Keep annotation JSON as the source of truth. Export scripts can later convert it
 to COCO, YOLO, tracking CSVs, or model-specific event windows.
+
+## Prediction Overlay JSON
+
+The labeler can load model predictions as a separate JSON file. Predictions are
+displayed as an overlay and are not saved as labels unless accepted in the UI.
+Accepted table predictions become normal editable table labels.
+
+```json
+{
+  "frames": [
+    {
+      "frame": 1842,
+      "objects": [
+        {
+          "type": "table",
+          "polygon": [[410, 690], [1470, 675], [1260, 438], [610, 448]],
+          "confidence": 0.91
+        }
+      ]
+    }
+  ]
+}
+```
+
+For quick scripts, each frame may also use a top-level `polygon` field instead
+of an `objects` array.

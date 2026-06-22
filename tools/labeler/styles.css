@@ -283,6 +283,13 @@ canvas {
   font-weight: 700;
 }
 
+.prediction-status {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .summary-list,
 .event-list {
   display: grid;

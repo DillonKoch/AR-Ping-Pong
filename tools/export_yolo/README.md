@@ -91,3 +91,15 @@ yolo segment train \
   epochs=30 \
   imgsz=960
 ```
+
+Export model table predictions for review in the browser labeler:
+
+```bash
+python3 tools/export_yolo/predict_table_labels.py \
+  --model models/table_segmenter/table_yolo26n_seg_img640.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.table_predictions.json
+```
+
+Load the resulting JSON with the labeler's Predictions button. Predictions are
+only overlays until accepted into a frame label.

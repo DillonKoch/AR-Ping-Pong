@@ -11,6 +11,8 @@ const state = {
   activeTablePointDrag: null,
   activeNetPoints: [],
   activeBallDrag: null,
+  predictions: createEmptyPredictions(),
+  showPredictions: true,
   history: [],
   annotations: createEmptyAnnotations(),
 };
@@ -30,6 +32,7 @@ const eventHotkeys = {
 const elements = {
   videoInput: document.querySelector("#videoInput"),
   annotationInput: document.querySelector("#annotationInput"),
+  predictionInput: document.querySelector("#predictionInput"),
   chooseSaveFolderButton: document.querySelector("#chooseSaveFolderButton"),
   downloadButton: document.querySelector("#downloadButton"),
   viewport: document.querySelector("#viewport"),
@@ -57,6 +60,9 @@ const elements = {
   finishTableButton: document.querySelector("#finishTableButton"),
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
+  predictionStatus: document.querySelector("#predictionStatus"),
+  acceptPredictionButton: document.querySelector("#acceptPredictionButton"),
+  togglePredictionsButton: document.querySelector("#togglePredictionsButton"),
 };
 
 const ctx = elements.canvas.getContext("2d");
@@ -66,6 +72,7 @@ const ANNOTATION_DIRECTORY_KEY = "annotation-directory";
 
 elements.videoInput.addEventListener("change", handleVideoInput);
 elements.annotationInput.addEventListener("change", handleAnnotationInput);
+elements.predictionInput.addEventListener("change", handlePredictionInput);
 elements.chooseSaveFolderButton.addEventListener("click", chooseAnnotationSaveFolder);
 elements.downloadButton.addEventListener("click", downloadAnnotations);
 elements.playButton.addEventListener("click", togglePlayback);
@@ -92,6 +99,8 @@ elements.undoButton.addEventListener("click", undo);
 elements.finishTableButton.addEventListener("click", finishTablePolygon);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
+elements.acceptPredictionButton.addEventListener("click", acceptCurrentTablePrediction);
+elements.togglePredictionsButton.addEventListener("click", togglePredictions);
 
 document.querySelectorAll("[data-tool]").forEach((button) => {
   button.addEventListener("click", () => setTool(button.dataset.tool));
@@ -120,6 +129,13 @@ function createEmptyAnnotations() {
     },
     frames: [],
     events: [],
+  };
+}
+
+function createEmptyPredictions() {
+  return {
+    frames: [],
+    sourceFilename: "",
   };
 }
 
@@ -178,6 +194,70 @@ function handleAnnotationInput(event) {
     }
   });
   reader.readAsText(file);
+}
+
+function handlePredictionInput(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      state.predictions = normalizePredictions(parsed, file.name);
+      state.showPredictions = true;
+      updatePredictionStatus();
+      render();
+    } catch (error) {
+      window.alert(`Could not load prediction JSON: ${error.message}`);
+    }
+  });
+  reader.readAsText(file);
+}
+
+function normalizePredictions(input, sourceFilename = "") {
+  const frames = Array.isArray(input.frames)
+    ? input.frames
+    : Array.isArray(input.predictions)
+      ? input.predictions
+      : [];
+
+  return {
+    sourceFilename,
+    frames: frames
+      .map(normalizePredictionFrame)
+      .filter((frame) => frame && frame.objects.length > 0)
+      .sort((a, b) => a.frame - b.frame),
+  };
+}
+
+function normalizePredictionFrame(frameInput) {
+  const frame = Number(frameInput.frame);
+  if (!Number.isFinite(frame)) return null;
+
+  const rawObjects = Array.isArray(frameInput.objects)
+    ? frameInput.objects
+    : frameInput.polygon
+      ? [{ type: "table", polygon: frameInput.polygon, confidence: frameInput.confidence }]
+      : [];
+
+  const objects = rawObjects
+    .map((object) => {
+      if (object.type !== "table" || !Array.isArray(object.polygon)) return null;
+      const polygon = object.polygon
+        .map((point) => Array.isArray(point) && point.length >= 2 ? [round(Number(point[0])), round(Number(point[1]))] : null)
+        .filter(Boolean);
+      if (polygon.length < 3) return null;
+      return {
+        type: "table",
+        polygon,
+        confidence: Number.isFinite(Number(object.confidence)) ? Number(object.confidence) : null,
+        predicted: true,
+      };
+    })
+    .filter(Boolean);
+
+  return { frame, objects };
 }
 
 async function tryLoadMatchingAnnotations(videoFilename) {
@@ -689,6 +769,37 @@ function clearCurrentFrame() {
   render();
 }
 
+function acceptCurrentTablePrediction() {
+  const prediction = getCurrentTablePrediction();
+  if (!prediction) return;
+
+  pushHistory("accept-table-prediction");
+  const frame = getCurrentFrame();
+  const frameLabel = getOrCreateFrameLabel(frame);
+  upsertObject(frameLabel, {
+    type: "table",
+    polygon: prediction.polygon.map((point) => [...point]),
+    confidence: prediction.confidence,
+    predictedFromModel: true,
+    interpolated: false,
+  });
+  interpolateTableLabels();
+  cleanupEmptyFrames();
+  setTool("table");
+  render();
+}
+
+function togglePredictions() {
+  state.showPredictions = !state.showPredictions;
+  render();
+}
+
+function getCurrentTablePrediction() {
+  if (!state.showPredictions) return null;
+  const framePrediction = state.predictions.frames.find((item) => item.frame === getCurrentFrame());
+  return framePrediction?.objects.find((object) => object.type === "table") || null;
+}
+
 function interpolateBallLabels() {
   removeInterpolatedBallLabels();
 
@@ -1043,6 +1154,7 @@ function render() {
   drawOverlay();
   renderReadout();
   renderEventButtons();
+  updatePredictionStatus();
   renderFrameSummary();
   renderEventList();
 }
@@ -1068,6 +1180,11 @@ function resizeCanvasToVideo() {
 
 function drawOverlay() {
   ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+
+  const prediction = getCurrentTablePrediction();
+  if (prediction) {
+    drawPredictionTable(prediction);
+  }
 
   const frameLabel = getFrameLabel(getCurrentFrame());
   if (frameLabel) {
@@ -1098,6 +1215,26 @@ function drawTable(table) {
   });
 }
 
+function drawPredictionTable(table) {
+  drawPolygon(table.polygon, "#ffc857", true, {
+    fillStyle: "rgba(255, 200, 87, 0.10)",
+    lineDash: [8, 6],
+    lineWidth: 2,
+  });
+  table.polygon.forEach(([x, y]) => {
+    const point = videoPointToCanvasPoint(x, y);
+    ctx.save();
+    ctx.fillStyle = "#ffc857";
+    ctx.strokeStyle = "#0b0f14";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
 function drawBall(ball) {
   const bbox = getBallBbox(ball);
   const start = videoPointToCanvasPoint(bbox[0], bbox[1]);
@@ -1114,13 +1251,14 @@ function drawBall(ball) {
   ctx.restore();
 }
 
-function drawPolygon(points, color, closed = true) {
+function drawPolygon(points, color, closed = true, options = {}) {
   if (!points || points.length < 2) return;
 
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.fillStyle = "rgba(52, 211, 153, 0.12)";
-  ctx.lineWidth = 3;
+  ctx.fillStyle = options.fillStyle || "rgba(52, 211, 153, 0.12)";
+  ctx.lineWidth = options.lineWidth || 3;
+  if (options.lineDash) ctx.setLineDash(options.lineDash);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
     const point = videoPointToCanvasPoint(x, y);
@@ -1212,6 +1350,7 @@ function renderEventButtons() {
 
 function renderFrameSummary() {
   const frameLabel = getFrameLabel(getCurrentFrame());
+  const prediction = getCurrentTablePrediction();
   elements.frameSummary.innerHTML = "";
 
   if (!frameLabel || frameLabel.objects.length === 0) {
@@ -1222,6 +1361,11 @@ function renderFrameSummary() {
     });
   }
 
+  if (prediction) {
+    const confidence = prediction.confidence === null ? "" : ` ${(prediction.confidence * 100).toFixed(0)}%`;
+    elements.frameSummary.append(createSummaryItem("Prediction", `${prediction.polygon.length} pts${confidence}`));
+  }
+
   const events = state.annotations.events.filter((event) => event.frame === getCurrentFrame());
   if (events.length === 0) {
     elements.frameSummary.append(createSummaryItem("Events", "None"));
@@ -1230,6 +1374,18 @@ function renderFrameSummary() {
       elements.frameSummary.append(createSummaryItem("Event", event.type));
     });
   }
+}
+
+function updatePredictionStatus() {
+  const predictionCount = state.predictions.frames.length;
+  const currentPrediction = getCurrentTablePrediction();
+  const label = predictionCount === 0
+    ? "No predictions loaded"
+    : `${predictionCount} predicted frames${currentPrediction ? " / current frame" : ""}`;
+  elements.predictionStatus.textContent = label;
+  elements.acceptPredictionButton.disabled = !currentPrediction;
+  elements.togglePredictionsButton.disabled = predictionCount === 0;
+  elements.togglePredictionsButton.textContent = state.showPredictions ? "Hide Predictions" : "Show Predictions";
 }
 
 function createSummaryItem(label, value) {

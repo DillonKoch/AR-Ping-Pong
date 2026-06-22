@@ -21,6 +21,10 @@
           Labels
           <input id="annotationInput" type="file" accept="application/json,.json">
         </label>
+        <label class="file-button">
+          Predictions
+          <input id="predictionInput" type="file" accept="application/json,.json">
+        </label>
         <button id="chooseSaveFolderButton" type="button">Save Folder</button>
         <button id="downloadButton" type="button">Save JSON</button>
         <span id="saveStatus" class="save-status">Downloads fallback</span>
@@ -95,6 +99,15 @@
             <button type="button" data-event="point_end">Point End</button>
             <button type="button" data-event="ball_lost">Ball Lost</button>
             <button type="button" data-event="uncertain">Uncertain</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Predictions</h2>
+          <div id="predictionStatus" class="prediction-status">No predictions loaded</div>
+          <div class="action-grid">
+            <button id="acceptPredictionButton" type="button">Accept Table</button>
+            <button id="togglePredictionsButton" type="button">Hide Predictions</button>
           </div>
         </section>
 
