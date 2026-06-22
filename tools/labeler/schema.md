@@ -58,6 +58,8 @@ frame-corner points when the first and last table polygon points are near the
 video boundary, preferring the bottom portion of the frame for near-side cropped
 tables. Interpolated table labels are generated only between manual table
 polygons with matching point counts.
+Net labels are two-point lines. Interpolated net labels are generated between
+manual net lines, and are marked with `"interpolated": true`.
 
 If a cropped table closes with a bad diagonal across the frame, use the labeler's
 `Close Edge` action on that frame. It snaps the first and last table polygon

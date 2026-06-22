@@ -10,6 +10,7 @@ const state = {
   activeTableFrame: null,
   activeTablePointDrag: null,
   activeNetPoints: [],
+  activeNetFrame: null,
   activeBallDrag: null,
   predictions: createEmptyPredictions(),
   showPredictions: true,
@@ -337,9 +338,11 @@ function applyAnnotations(parsed) {
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
   state.history = [];
   interpolateBallLabels();
   interpolateTableLabels();
+  interpolateNetLabels();
   render();
 }
 
@@ -470,6 +473,7 @@ function setTool(tool) {
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
   document.querySelectorAll("[data-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === tool);
   });
@@ -545,6 +549,10 @@ function handleCanvasPointerDown(event) {
   }
 
   if (state.tool === "net") {
+    if (state.activeNetPoints.length > 0 && state.activeNetFrame !== frame) {
+      state.activeNetPoints = [];
+    }
+    state.activeNetFrame = frame;
     state.activeNetPoints.push([round(point.x), round(point.y)]);
     if (state.activeNetPoints.length === 2) {
       pushHistory("draw-net");
@@ -552,8 +560,12 @@ function handleCanvasPointerDown(event) {
       upsertObject(frameLabel, {
         type: "net",
         line: state.activeNetPoints,
+        interpolated: false,
       });
       state.activeNetPoints = [];
+      state.activeNetFrame = null;
+      interpolateNetLabels();
+      cleanupEmptyFrames();
     }
     render();
     return;
@@ -743,6 +755,7 @@ function cancelPendingPoints() {
   state.activeTablePoints = [];
   state.activeTableFrame = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
   state.activeBallDrag = null;
   render();
 }
@@ -859,6 +872,8 @@ function addEvent(type) {
 
 function clearCurrentFrame() {
   const frame = getCurrentFrame();
+  const existingFrameLabel = getFrameLabel(frame);
+  const removedManualObject = existingFrameLabel?.objects.some((object) => !object.interpolated);
   pushHistory("clear-frame");
   state.annotations.frames = state.annotations.frames.filter((item) => item.frame !== frame);
   state.annotations.events = state.annotations.events.filter((item) => item.frame !== frame);
@@ -866,6 +881,13 @@ function clearCurrentFrame() {
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
+  if (removedManualObject) {
+    interpolateBallLabels();
+    interpolateTableLabels();
+    interpolateNetLabels();
+  }
+  cleanupEmptyFrames();
   render();
 }
 
@@ -1002,6 +1024,48 @@ function interpolateTableLabels() {
   cleanupEmptyFrames();
 }
 
+function interpolateNetLabels() {
+  removeInterpolatedNetLabels();
+
+  const keyedFrames = state.annotations.frames
+    .map((frameLabel) => ({
+      frameLabel,
+      net: frameLabel.objects.find((object) => object.type === "net" && !object.interpolated),
+    }))
+    .filter((item) => item.net && Array.isArray(item.net.line) && item.net.line.length === 2)
+    .sort((a, b) => a.frameLabel.frame - b.frameLabel.frame);
+
+  if (keyedFrames.length < 2) return;
+
+  for (let index = 0; index < keyedFrames.length - 1; index += 1) {
+    const start = keyedFrames[index];
+    const end = keyedFrames[index + 1];
+    const startFrame = start.frameLabel.frame;
+    const endFrame = end.frameLabel.frame;
+    const gap = endFrame - startFrame;
+    if (gap <= 1) continue;
+
+    for (let frame = startFrame + 1; frame < endFrame; frame += 1) {
+      const frameLabel = getOrCreateFrameLabel(frame);
+      const hasNet = frameLabel.objects.some((object) => object.type === "net");
+      if (hasNet) continue;
+
+      const ratio = (frame - startFrame) / gap;
+      frameLabel.objects.push({
+        type: "net",
+        line: start.net.line.map((point, pointIndex) => [
+          round(lerp(point[0], end.net.line[pointIndex][0], ratio)),
+          round(lerp(point[1], end.net.line[pointIndex][1], ratio)),
+        ]),
+        interpolated: true,
+      });
+      frameLabel.timeMs = Math.round((frame / state.fps) * 1000);
+    }
+  }
+
+  cleanupEmptyFrames();
+}
+
 function removeInterpolatedBallLabels() {
   state.annotations.frames.forEach((frameLabel) => {
     frameLabel.objects = frameLabel.objects.filter(
@@ -1014,6 +1078,14 @@ function removeInterpolatedTableLabels() {
   state.annotations.frames.forEach((frameLabel) => {
     frameLabel.objects = frameLabel.objects.filter(
       (object) => object.type !== "table" || !object.interpolated,
+    );
+  });
+}
+
+function removeInterpolatedNetLabels() {
+  state.annotations.frames.forEach((frameLabel) => {
+    frameLabel.objects = frameLabel.objects.filter(
+      (object) => object.type !== "net" || !object.interpolated,
     );
   });
 }
@@ -1033,6 +1105,7 @@ function newSession() {
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
   render();
 }
 
@@ -1045,6 +1118,7 @@ function undo() {
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
   state.activeNetPoints = [];
+  state.activeNetFrame = null;
   render();
 }
 
@@ -1536,7 +1610,7 @@ function summarizeObject(object) {
     return `${bbox[0]}, ${bbox[1]} ${bbox[2]}x${bbox[3]}${suffix}`;
   }
   if (object.type === "table") return `${object.polygon.length} pts${object.interpolated ? " interp" : ""}`;
-  if (object.type === "net") return "2 pts";
+  if (object.type === "net") return `2 pts${object.interpolated ? " interp" : ""}`;
   return "";
 }
 
