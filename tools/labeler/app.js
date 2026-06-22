@@ -54,6 +54,8 @@ const elements = {
   saveStatus: document.querySelector("#saveStatus"),
   frameSummary: document.querySelector("#frameSummary"),
   eventList: document.querySelector("#eventList"),
+  shotChart: document.querySelector("#shotChart"),
+  shotChartSummary: document.querySelector("#shotChartSummary"),
   occludedInput: document.querySelector("#occludedInput"),
   blurredInput: document.querySelector("#blurredInput"),
   undoButton: document.querySelector("#undoButton"),
@@ -66,9 +68,11 @@ const elements = {
 };
 
 const ctx = elements.canvas.getContext("2d");
+const shotCtx = elements.shotChart.getContext("2d");
 const ANNOTATION_DIRECTORY_DB = "ar-ping-pong-labeler";
 const ANNOTATION_DIRECTORY_STORE = "handles";
 const ANNOTATION_DIRECTORY_KEY = "annotation-directory";
+const BOUNCE_EVENT_TYPES = new Set(["bounce_near", "bounce_far"]);
 
 elements.videoInput.addEventListener("change", handleVideoInput);
 elements.annotationInput.addEventListener("change", handleAnnotationInput);
@@ -90,6 +94,7 @@ elements.canvas.addEventListener("pointerdown", handleCanvasPointerDown);
 elements.canvas.addEventListener("pointermove", handleCanvasPointerMove);
 elements.canvas.addEventListener("pointerup", handleCanvasPointerUp);
 elements.canvas.addEventListener("pointercancel", cancelBallDrag);
+elements.shotChart.addEventListener("click", handleShotChartClick);
 elements.video.addEventListener("loadedmetadata", handleLoadedMetadata);
 elements.video.addEventListener("timeupdate", render);
 elements.video.addEventListener("seeked", render);
@@ -1156,6 +1161,7 @@ function render() {
   renderEventButtons();
   updatePredictionStatus();
   renderFrameSummary();
+  renderShotChart();
   renderEventList();
 }
 
@@ -1388,6 +1394,222 @@ function updatePredictionStatus() {
   elements.togglePredictionsButton.textContent = state.showPredictions ? "Hide Predictions" : "Show Predictions";
 }
 
+function renderShotChart() {
+  const canvas = elements.shotChart;
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = 18;
+  const table = {
+    x: padding,
+    y: padding,
+    width: width - padding * 2,
+    height: height - padding * 2,
+  };
+  const points = getShotChartPoints();
+  const currentFrame = getCurrentFrame();
+
+  shotCtx.clearRect(0, 0, width, height);
+  shotCtx.save();
+  shotCtx.fillStyle = "#07110d";
+  shotCtx.fillRect(0, 0, width, height);
+
+  shotCtx.fillStyle = "rgba(52, 211, 153, 0.10)";
+  shotCtx.strokeStyle = "#34d399";
+  shotCtx.lineWidth = 2;
+  shotCtx.fillRect(table.x, table.y, table.width, table.height);
+  shotCtx.strokeRect(table.x, table.y, table.width, table.height);
+
+  shotCtx.strokeStyle = "rgba(248, 250, 252, 0.75)";
+  shotCtx.lineWidth = 1.5;
+  shotCtx.beginPath();
+  shotCtx.moveTo(table.x, table.y + table.height / 2);
+  shotCtx.lineTo(table.x + table.width, table.y + table.height / 2);
+  shotCtx.stroke();
+
+  shotCtx.strokeStyle = "rgba(248, 250, 252, 0.35)";
+  shotCtx.beginPath();
+  shotCtx.moveTo(table.x + table.width / 2, table.y);
+  shotCtx.lineTo(table.x + table.width / 2, table.y + table.height);
+  shotCtx.stroke();
+
+  points.forEach((point) => {
+    const x = table.x + point.u * table.width;
+    const y = table.y + point.v * table.height;
+    const isCurrent = Math.abs(point.frame - currentFrame) <= 1;
+    shotCtx.save();
+    shotCtx.fillStyle = point.type === "bounce_near" ? "#5ab7ff" : "#ffc857";
+    shotCtx.strokeStyle = isCurrent ? "#eef5ff" : "#0b0f14";
+    shotCtx.lineWidth = isCurrent ? 3 : 1.5;
+    shotCtx.beginPath();
+    shotCtx.arc(x, y, isCurrent ? 6 : 4, 0, Math.PI * 2);
+    shotCtx.fill();
+    shotCtx.stroke();
+    shotCtx.restore();
+  });
+
+  shotCtx.fillStyle = "#92a3b4";
+  shotCtx.font = "700 11px system-ui, sans-serif";
+  shotCtx.fillText("far", table.x + 6, table.y + 14);
+  shotCtx.fillText("near", table.x + 6, table.y + table.height - 6);
+  shotCtx.restore();
+
+  const usable = points.length;
+  const totalBounces = state.annotations.events.filter((event) => BOUNCE_EVENT_TYPES.has(event.type)).length;
+  elements.shotChartSummary.textContent = totalBounces === 0
+    ? "No bounce events yet"
+    : `${usable}/${totalBounces} bounces projected`;
+  elements.shotChart._shotPoints = points;
+}
+
+function handleShotChartClick(event) {
+  const points = elements.shotChart._shotPoints || [];
+  if (!points.length) return;
+
+  const rect = elements.shotChart.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * elements.shotChart.width;
+  const y = ((event.clientY - rect.top) / rect.height) * elements.shotChart.height;
+  const nearest = points
+    .map((point) => ({
+      point,
+      distance: Math.hypot(point.chartX - x, point.chartY - y),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  if (!nearest || nearest.distance > 18) return;
+  elements.video.pause();
+  elements.video.currentTime = nearest.point.frame / state.fps;
+  render();
+}
+
+function getShotChartPoints() {
+  const padding = 18;
+  const chartWidth = elements.shotChart.width - padding * 2;
+  const chartHeight = elements.shotChart.height - padding * 2;
+
+  return state.annotations.events
+    .filter((event) => BOUNCE_EVENT_TYPES.has(event.type))
+    .map((event) => {
+      const sample = getBounceProjectionSample(event);
+      if (!sample) return null;
+      const normalized = projectPointToTable(sample.ball.center, sample.table.polygon);
+      if (!normalized) return null;
+      const u = clamp01(normalized.u);
+      const v = clamp01(normalized.v);
+      return {
+        frame: event.frame,
+        type: event.type,
+        u,
+        v,
+        chartX: padding + u * chartWidth,
+        chartY: padding + v * chartHeight,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getBounceProjectionSample(event) {
+  const start = Array.isArray(event.windowFrames) ? event.windowFrames[0] : event.frame - 2;
+  const end = Array.isArray(event.windowFrames) ? event.windowFrames[1] : event.frame + 2;
+  const minFrame = Math.max(0, Math.min(start, end));
+  const maxFrame = Math.max(start, end);
+
+  for (let offset = 0; offset <= Math.max(2, maxFrame - minFrame); offset += 1) {
+    const candidates = [event.frame - offset, event.frame + offset]
+      .filter((frame, index, frames) => frame >= minFrame && frame <= maxFrame && frames.indexOf(frame) === index);
+    for (const frame of candidates) {
+      const frameLabel = getFrameLabel(frame);
+      const ball = frameLabel?.objects.find((object) => object.type === "ball");
+      const table = frameLabel?.objects.find((object) => object.type === "table");
+      if (ball?.center && table?.polygon) return { frame, ball, table };
+    }
+  }
+
+  return null;
+}
+
+function projectPointToTable(point, polygon) {
+  const corners = getTableQuadCorners(polygon);
+  if (!corners) return null;
+  const transform = solveHomography(corners, [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ]);
+  if (!transform) return null;
+
+  const x = point[0];
+  const y = point[1];
+  const denominator = transform[6] * x + transform[7] * y + 1;
+  if (Math.abs(denominator) < 1e-9) return null;
+
+  return {
+    u: (transform[0] * x + transform[1] * y + transform[2]) / denominator,
+    v: (transform[3] * x + transform[4] * y + transform[5]) / denominator,
+  };
+}
+
+function getTableQuadCorners(polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 4) return null;
+
+  const unique = [];
+  polygon.forEach((point) => {
+    if (!unique.some((item) => item[0] === point[0] && item[1] === point[1])) {
+      unique.push(point);
+    }
+  });
+  if (unique.length < 4) return null;
+
+  const topLeft = minBy(unique, ([x, y]) => x + y);
+  const bottomRight = maxBy(unique, ([x, y]) => x + y);
+  const topRight = maxBy(unique, ([x, y]) => x - y);
+  const bottomLeft = minBy(unique, ([x, y]) => x - y);
+  const corners = [topLeft, topRight, bottomRight, bottomLeft];
+  if (new Set(corners.map((point) => point.join(","))).size < 4) return null;
+  return corners;
+}
+
+function solveHomography(source, destination) {
+  const matrix = [];
+  const values = [];
+  for (let index = 0; index < 4; index += 1) {
+    const [x, y] = source[index];
+    const [u, v] = destination[index];
+    matrix.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
+    values.push(u);
+    matrix.push([0, 0, 0, x, y, 1, -v * x, -v * y]);
+    values.push(v);
+  }
+  return solveLinearSystem(matrix, values);
+}
+
+function solveLinearSystem(matrix, values) {
+  const size = values.length;
+  const rows = matrix.map((row, index) => [...row, values[index]]);
+
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(rows[row][column]) > Math.abs(rows[pivot][column])) pivot = row;
+    }
+    if (Math.abs(rows[pivot][column]) < 1e-9) return null;
+    [rows[column], rows[pivot]] = [rows[pivot], rows[column]];
+
+    const divisor = rows[column][column];
+    for (let col = column; col <= size; col += 1) rows[column][col] /= divisor;
+
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = rows[row][column];
+      for (let col = column; col <= size; col += 1) {
+        rows[row][col] -= factor * rows[column][col];
+      }
+    }
+  }
+
+  return rows.map((row) => row[size]);
+}
+
 function createSummaryItem(label, value) {
   const item = document.createElement("div");
   const labelNode = document.createElement("span");
@@ -1502,6 +1724,18 @@ function formatTime(ms) {
   const seconds = Math.floor((safeMs % 60000) / 1000);
   const millis = safeMs % 1000;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
+
+function minBy(items, score) {
+  return items.reduce((best, item) => score(item) < score(best) ? item : best, items[0]);
+}
+
+function maxBy(items, score) {
+  return items.reduce((best, item) => score(item) > score(best) ? item : best, items[0]);
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
 }
 
 function round(value) {
