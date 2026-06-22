@@ -33,6 +33,42 @@ display before investing in the native perception stack.
 
 Open `index.html` in a browser and use arrow keys plus `Enter`.
 
+## Data Labeling Tool
+
+The repo includes a local browser labeler at `tools/labeler/index.html` for
+preparing POV ping pong datasets before the display glasses are available.
+
+Use it to:
+
+- Load a local video from `data/videos/` or anywhere on disk.
+- Step through frames and label ball center/radius, table polygon, and net line.
+- Mark referee events such as point start, bounce, paddle contact, net hit, point
+  end, and uncertain frames.
+- Save/load annotation JSON sidecars.
+- Export the current frame as a PNG for model-training experiments.
+
+Suggested data layout:
+
+```txt
+data/
+  videos/       # source POV videos, ignored by git except .gitkeep
+  annotations/  # saved *.labels.json files
+  exports/      # exported frames or converted training datasets
+```
+
+Labeler shortcuts:
+
+- `Space`: play/pause
+- `,` / `.`: previous/next frame
+- `B`: ball tool
+- `T`: table tool
+- `N`: net tool
+- `V`: select/no-draw tool
+- `1`-`9`: add event labels
+- `U`: undo
+- `Delete`: clear current frame
+- `Cmd/Ctrl+S`: save annotation JSON
+
 ## Controls
 
 - `Left` / `Right`: move focus between controls

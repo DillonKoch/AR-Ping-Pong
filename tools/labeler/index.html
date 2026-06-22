@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AR Ping Pong Labeler</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>AR Ping Pong Labeler</h1>
+        <p>POV video annotation for ball tracking, table geometry, and referee events.</p>
+      </div>
+      <div class="header-actions">
+        <label class="file-button">
+          Video
+          <input id="videoInput" type="file" accept="video/*">
+        </label>
+        <label class="file-button">
+          Labels
+          <input id="annotationInput" type="file" accept="application/json,.json">
+        </label>
+        <button id="downloadButton" type="button">Save JSON</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="stage-panel" aria-label="Video annotation stage">
+        <div class="video-toolbar">
+          <button id="playButton" type="button">Play</button>
+          <button id="prevFrameButton" type="button">Prev Frame</button>
+          <button id="nextFrameButton" type="button">Next Frame</button>
+          <label>
+            FPS
+            <input id="fpsInput" type="number" min="1" max="240" step="1" value="30">
+          </label>
+          <label>
+            Jump
+            <input id="frameInput" type="number" min="0" step="1" value="0">
+          </label>
+          <button id="jumpButton" type="button">Go</button>
+          <button id="exportFrameButton" type="button">Export Frame</button>
+        </div>
+
+        <div class="stage-wrap">
+          <video id="video" playsinline></video>
+          <canvas id="overlay" aria-label="Annotation canvas"></canvas>
+        </div>
+
+        <div class="timeline">
+          <input id="timeline" type="range" min="0" max="0" step="0.001" value="0">
+          <div class="readout">
+            <span id="videoName">No video loaded</span>
+            <span id="timeReadout">00:00.000 / frame 0</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel" aria-label="Annotation tools">
+        <section class="panel-section">
+          <h2>Draw</h2>
+          <div class="tool-grid" role="group" aria-label="Drawing tools">
+            <button class="tool-button active" type="button" data-tool="ball">Ball</button>
+            <button class="tool-button" type="button" data-tool="table">Table</button>
+            <button class="tool-button" type="button" data-tool="net">Net</button>
+            <button class="tool-button" type="button" data-tool="select">Select</button>
+          </div>
+          <label class="checkbox-row">
+            <input id="occludedInput" type="checkbox">
+            Ball occluded
+          </label>
+          <label class="checkbox-row">
+            <input id="blurredInput" type="checkbox">
+            Ball blurred
+          </label>
+        </section>
+
+        <section class="panel-section">
+          <h2>Events</h2>
+          <div class="event-grid">
+            <button type="button" data-event="point_start">Point Start</button>
+            <button type="button" data-event="serve_contact">Serve</button>
+            <button type="button" data-event="paddle_contact">Paddle</button>
+            <button type="button" data-event="bounce_near">Bounce Near</button>
+            <button type="button" data-event="bounce_far">Bounce Far</button>
+            <button type="button" data-event="net_hit">Net Hit</button>
+            <button type="button" data-event="point_end">Point End</button>
+            <button type="button" data-event="ball_lost">Ball Lost</button>
+            <button type="button" data-event="uncertain">Uncertain</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Current Frame</h2>
+          <div id="frameSummary" class="summary-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Recent Events</h2>
+          <ol id="eventList" class="event-list"></ol>
+        </section>
+
+        <section class="panel-section">
+          <h2>Actions</h2>
+          <div class="action-grid">
+            <button id="undoButton" type="button">Undo</button>
+            <button id="clearFrameButton" type="button">Clear Frame</button>
+            <button id="newSessionButton" type="button">New Session</button>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="shortcut-bar">
+      <span>Space play/pause</span>
+      <span>, . frame step</span>
+      <span>B ball</span>
+      <span>T table</span>
+      <span>N net</span>
+      <span>1-9 events</span>
+      <span>Cmd/Ctrl+S save</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

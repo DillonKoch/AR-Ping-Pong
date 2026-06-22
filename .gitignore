@@ -1,0 +1,7 @@
+data/videos/*
+data/annotations/*
+data/exports/*
+
+!data/videos/.gitkeep
+!data/annotations/.gitkeep
+!data/exports/.gitkeep
