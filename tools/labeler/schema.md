@@ -64,6 +64,11 @@ If a cropped table closes with a bad diagonal across the frame, use the labeler'
 points to nearby video edges and inserts any frame-corner points needed to close
 the table along the image boundary.
 
+When drawing table polygons, points clicked near the image edge snap to the
+exact edge, and points clicked near an image corner snap to the exact corner.
+This makes it reasonable to label offscreen table regions by tracing the visible
+table boundary and then continuing around the video frame boundary.
+
 ## Event Labels
 
 Events are frame-anchored and can include an uncertainty window.

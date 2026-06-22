@@ -544,7 +544,7 @@ function handleCanvasPointerDown(event) {
       state.activeTablePoints = [];
     }
     state.activeTableFrame = frame;
-    state.activeTablePoints.push([round(point.x), round(point.y)]);
+    state.activeTablePoints.push(snapTablePoint([round(point.x), round(point.y)]));
     render();
     return;
   }
@@ -650,6 +650,30 @@ function completeTablePolygon(points, options = {}) {
   };
 }
 
+function snapTablePoint(point) {
+  const width = state.annotations.video.width || elements.video.videoWidth;
+  const height = state.annotations.video.height || elements.video.videoHeight;
+  if (!width || !height) return point;
+
+  const cornerMargin = Math.max(18, Math.min(width, height) * 0.035);
+  const corners = [
+    [0, 0],
+    [width, 0],
+    [width, height],
+    [0, height],
+  ];
+  const nearestCorner = corners
+    .map((corner) => ({ corner, distance: Math.hypot(point[0] - corner[0], point[1] - corner[1]) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (nearestCorner.distance <= cornerMargin) {
+    return nearestCorner.corner.map(round);
+  }
+
+  const edgeMargin = Math.max(12, Math.min(width, height) * 0.025);
+  const edge = snapPointToFrameEdge(point, width, height, edgeMargin);
+  return edge ? edge.point : point;
+}
+
 function snapPointToFrameEdge(point, width, height, margin) {
   const distances = [
     { edge: "left", distance: point[0], point: [0, point[1]] },
@@ -732,10 +756,10 @@ function handleCanvasPointerMove(event) {
   }
 
   if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
-    state.activeTablePointDrag.table.polygon[state.activeTablePointDrag.pointIndex] = [
+    state.activeTablePointDrag.table.polygon[state.activeTablePointDrag.pointIndex] = snapTablePoint([
       round(point.x),
       round(point.y),
-    ];
+    ]);
     render();
     return;
   }
