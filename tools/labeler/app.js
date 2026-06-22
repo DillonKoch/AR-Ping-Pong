@@ -162,7 +162,7 @@ async function handleVideoInput(event) {
   state.annotations.video.id = videoId;
   pushHistory("load-video");
 
-  await tryLoadMatchingAnnotations(file.name);
+  await tryLoadMatchingAssets(file.name);
 }
 
 function getVideoId(filename) {
@@ -268,23 +268,66 @@ function normalizePredictionFrame(frameInput) {
 async function tryLoadMatchingAnnotations(videoFilename) {
   const directoryHandle = await getAnnotationDirectoryHandle({ requestPermission: true });
   if (!directoryHandle) {
-    updateSaveStatus("Choose Save Folder to auto-load labels");
+    updateSaveStatus("Choose Save Folder to auto-load labels and predictions");
     return;
   }
 
-  const annotationFilename = `${videoFilename.replace(/\.[^.]+$/, "")}.labels.json`;
+  await tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle);
+}
+
+async function tryLoadMatchingAssets(videoFilename) {
+  const directoryHandle = await getAnnotationDirectoryHandle({ requestPermission: true });
+  if (!directoryHandle) {
+    updateSaveStatus("Choose Save Folder to auto-load labels and predictions");
+    return;
+  }
+
+  await tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle);
+}
+
+async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle) {
+  const loaded = [];
+  const missing = [];
+  const annotationFilename = `${getVideoId(videoFilename)}.labels.json`;
+  const predictionFilename = `${getVideoId(videoFilename)}.table_predictions.json`;
+
   try {
     const fileHandle = await directoryHandle.getFileHandle(annotationFilename);
     const file = await fileHandle.getFile();
     const parsed = JSON.parse(await file.text());
     applyAnnotations(parsed);
-    updateSaveStatus(`Loaded ${annotationFilename}`);
+    loaded.push("labels");
   } catch (error) {
     if (error.name === "NotFoundError") {
-      updateSaveStatus(`No saved labels for ${videoFilename}`);
-      return;
+      missing.push("labels");
+    } else {
+      window.alert(`Could not auto-load labels: ${error.message}`);
     }
-    window.alert(`Could not auto-load labels: ${error.message}`);
+  }
+
+  try {
+    const fileHandle = await directoryHandle.getFileHandle(predictionFilename);
+    const file = await fileHandle.getFile();
+    const parsed = JSON.parse(await file.text());
+    state.predictions = normalizePredictions(parsed, predictionFilename);
+    state.showPredictions = true;
+    loaded.push("predictions");
+  } catch (error) {
+    if (error.name === "NotFoundError") {
+      state.predictions = createEmptyPredictions();
+      missing.push("predictions");
+    } else {
+      window.alert(`Could not auto-load predictions: ${error.message}`);
+    }
+  }
+
+  updatePredictionStatus();
+  render();
+
+  if (loaded.length > 0) {
+    updateSaveStatus(`Loaded ${loaded.join(" and ")}`);
+  } else {
+    updateSaveStatus(`No saved ${missing.join(" or ")} for ${videoFilename}`);
   }
 }
 
@@ -1000,7 +1043,7 @@ async function chooseAnnotationSaveFolder() {
     rememberAnnotationDirectoryHandle(state.annotationDirectoryHandle);
     updateSaveStatus(`Saving to ${state.annotationDirectoryHandle.name}/`);
     if (state.annotations.video.filename) {
-      await tryLoadMatchingAnnotations(state.annotations.video.filename);
+      await tryLoadMatchingAssets(state.annotations.video.filename);
     }
   } catch (error) {
     if (error.name !== "AbortError") {
