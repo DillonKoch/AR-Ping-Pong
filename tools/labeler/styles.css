@@ -53,6 +53,16 @@ button:hover,
   background: rgba(38, 217, 162, 0.16);
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:disabled:hover {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
 input[type="number"] {
   width: 82px;
   min-height: 34px;
@@ -90,7 +100,8 @@ h1 {
 
 .header-actions,
 .video-toolbar,
-.action-grid {
+.action-grid,
+.clear-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -142,11 +153,20 @@ h1 {
 }
 
 .video-toolbar {
-  display: grid;
-  grid-template-columns: repeat(6, max-content);
+  display: flex;
   gap: 8px;
   align-items: center;
   margin-bottom: 10px;
+}
+
+.clear-toolbar {
+  gap: 6px;
+}
+
+.clear-toolbar button {
+  min-height: 34px;
+  padding: 5px 9px;
+  font-size: 13px;
 }
 
 .video-toolbar label {

@@ -50,6 +50,9 @@ const elements = {
   frameInput: document.querySelector("#frameInput"),
   jumpButton: document.querySelector("#jumpButton"),
   exportFrameButton: document.querySelector("#exportFrameButton"),
+  clearBallButton: document.querySelector("#clearBallButton"),
+  clearTableButton: document.querySelector("#clearTableButton"),
+  clearNetButton: document.querySelector("#clearNetButton"),
   timeline: document.querySelector("#timeline"),
   videoName: document.querySelector("#videoName"),
   timeReadout: document.querySelector("#timeReadout"),
@@ -89,6 +92,9 @@ elements.fpsInput.addEventListener("change", updateFps);
 elements.frameInput.addEventListener("change", jumpToFrameInput);
 elements.jumpButton.addEventListener("click", jumpToFrameInput);
 elements.exportFrameButton.addEventListener("click", exportCurrentFrame);
+elements.clearBallButton.addEventListener("click", () => clearCurrentObject("ball"));
+elements.clearTableButton.addEventListener("click", () => clearCurrentObject("table"));
+elements.clearNetButton.addEventListener("click", () => clearCurrentObject("net"));
 elements.timeline.addEventListener("input", handleTimelineInput);
 elements.canvas.addEventListener("pointerdown", handleCanvasPointerDown);
 elements.canvas.addEventListener("pointermove", handleCanvasPointerMove);
@@ -958,6 +964,45 @@ function clearCurrentFrame() {
   render();
 }
 
+function clearCurrentObject(type) {
+  const frame = getCurrentFrame();
+  const frameLabel = getFrameLabel(frame);
+  const hasObject = frameLabel?.objects.some((object) => object.type === type);
+  if (!hasObject) return;
+
+  pushHistory(`clear-${type}`);
+  frameLabel.objects = frameLabel.objects.filter((object) => object.type !== type);
+  clearActiveObjectState(type);
+
+  if (type === "ball") interpolateBallLabels();
+  if (type === "table") interpolateTableLabels();
+  if (type === "net") interpolateNetLabels();
+
+  const refreshedFrameLabel = getFrameLabel(frame);
+  if (refreshedFrameLabel) {
+    refreshedFrameLabel.objects = refreshedFrameLabel.objects.filter((object) => object.type !== type);
+  }
+
+  cleanupEmptyFrames();
+  render();
+}
+
+function clearActiveObjectState(type) {
+  if (type === "ball") {
+    state.activeBallDrag = null;
+  }
+  if (type === "table") {
+    state.activeTablePoints = [];
+    state.activeTableFrame = null;
+    state.activeTablePointDrag = null;
+  }
+  if (type === "net") {
+    state.activeNetPoints = [];
+    state.activeNetFrame = null;
+    state.activeNetPointDrag = null;
+  }
+}
+
 function acceptCurrentTablePrediction() {
   const prediction = getCurrentTablePrediction();
   if (!prediction) return;
@@ -1427,7 +1472,11 @@ function renderViewportTransform() {
   elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
   elements.finishTableButton.disabled = state.activeTablePoints.length < 3;
   elements.finishNetButton.disabled = state.activeNetPoints.length < 2;
-  elements.closeTableEdgeButton.disabled = !getFrameLabel(getCurrentFrame())?.objects.some((object) => object.type === "table");
+  const currentObjects = getFrameLabel(getCurrentFrame())?.objects || [];
+  elements.clearBallButton.disabled = !currentObjects.some((object) => object.type === "ball");
+  elements.clearTableButton.disabled = !currentObjects.some((object) => object.type === "table");
+  elements.clearNetButton.disabled = !currentObjects.some((object) => object.type === "net");
+  elements.closeTableEdgeButton.disabled = !currentObjects.some((object) => object.type === "table");
 }
 
 function resizeCanvasToVideo() {
