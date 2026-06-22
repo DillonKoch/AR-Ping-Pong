@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export AR Ping Pong labeler JSON to an Ultralytics YOLO ball dataset."""
+"""Export AR Ping Pong table polygons to an Ultralytics YOLO segmentation dataset."""
 
 from __future__ import annotations
 
@@ -15,17 +15,13 @@ import cv2
 
 
 @dataclass(frozen=True)
-class BallLabel:
+class TableLabel:
     annotation_path: Path
     video_path: Path
     video_id: str
     frame: int
-    x: float
-    y: float
-    width: float
-    height: float
-    occluded: bool
-    blurred: bool
+    polygon: list[tuple[float, float]]
+    interpolated: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         "--out",
         required=True,
         type=Path,
-        help="Output YOLO dataset directory.",
+        help="Output YOLO segmentation dataset directory.",
     )
     parser.add_argument(
         "--val-ratio",
@@ -73,20 +69,15 @@ def parse_args() -> argparse.Namespace:
         help="JPEG quality for exported frames. Default: 95.",
     )
     parser.add_argument(
-        "--include-occluded",
+        "--manual-only",
         action="store_true",
-        help="Include labels marked occluded. Default: skip occluded balls.",
+        help="Skip interpolated table labels. Default: include them.",
     )
     parser.add_argument(
-        "--exclude-blurred",
-        action="store_true",
-        help="Skip labels marked blurred. Default: include blurred balls.",
-    )
-    parser.add_argument(
-        "--min-radius",
-        type=float,
-        default=2.0,
-        help="Minimum half-size of the larger ball box dimension to export. Default: 2.",
+        "--min-points",
+        type=int,
+        default=3,
+        help="Minimum polygon points required to export a table. Default: 3.",
     )
     parser.add_argument(
         "--clean",
@@ -106,16 +97,15 @@ def main() -> None:
     make_dataset_dirs(args.out)
 
     annotation_paths = collect_annotation_paths(args.annotations)
-    labels = collect_ball_labels(
+    labels = collect_table_labels(
         annotation_paths=annotation_paths,
         videos_dir=args.videos,
-        include_occluded=args.include_occluded,
-        include_blurred=not args.exclude_blurred,
-        min_radius=args.min_radius,
+        include_interpolated=not args.manual_only,
+        min_points=args.min_points,
     )
 
     if not labels:
-        raise SystemExit("No exportable ball labels found.")
+        raise SystemExit("No exportable table labels found.")
 
     manifest = export_labels(labels, args)
     write_dataset_yaml(args.out)
@@ -137,6 +127,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--val-ratio must be >= 0 and < 1")
     if not 1 <= args.jpeg_quality <= 100:
         raise SystemExit("--jpeg-quality must be between 1 and 100")
+    if args.min_points < 3:
+        raise SystemExit("--min-points must be at least 3")
 
 
 def make_dataset_dirs(out_dir: Path) -> None:
@@ -151,14 +143,13 @@ def collect_annotation_paths(path: Path) -> list[Path]:
     return sorted(item for item in path.glob("*.json") if item.is_file())
 
 
-def collect_ball_labels(
+def collect_table_labels(
     annotation_paths: Iterable[Path],
     videos_dir: Path,
-    include_occluded: bool,
-    include_blurred: bool,
-    min_radius: float,
-) -> list[BallLabel]:
-    labels: list[BallLabel] = []
+    include_interpolated: bool,
+    min_points: int,
+) -> list[TableLabel]:
+    labels: list[TableLabel] = []
 
     for annotation_path in annotation_paths:
         data = read_json(annotation_path)
@@ -179,35 +170,27 @@ def collect_ball_labels(
             if frame < 0:
                 continue
 
-            ball = next(
-                (item for item in frame_label.get("objects", []) if item.get("type") == "ball"),
+            table = next(
+                (item for item in frame_label.get("objects", []) if item.get("type") == "table"),
                 None,
             )
-            if not ball:
+            if not table:
+                continue
+            if table.get("interpolated") and not include_interpolated:
                 continue
 
-            if ball.get("occluded") and not include_occluded:
-                continue
-            if ball.get("blurred") and not include_blurred:
-                continue
-
-            parsed = parse_ball(ball, min_radius)
-            if not parsed:
+            polygon = parse_polygon(table, min_points)
+            if not polygon:
                 continue
 
-            x, y, width, height = parsed
             labels.append(
-                BallLabel(
+                TableLabel(
                     annotation_path=annotation_path,
                     video_path=video_path,
                     video_id=video_id,
                     frame=frame,
-                    x=x,
-                    y=y,
-                    width=width,
-                    height=height,
-                    occluded=bool(ball.get("occluded")),
-                    blurred=bool(ball.get("blurred")),
+                    polygon=polygon,
+                    interpolated=bool(table.get("interpolated")),
                 )
             )
 
@@ -236,27 +219,23 @@ def find_video_path(video_filename: str, videos_dir: Path, annotation_path: Path
     return None
 
 
-def parse_ball(ball: dict[str, Any], min_radius: float) -> tuple[float, float, float, float] | None:
-    if "bbox" in ball:
-        x, y, width, height = [float(value) for value in ball["bbox"]]
-        radius = max(width, height) / 2
-        if radius < min_radius:
+def parse_polygon(table: dict[str, Any], min_points: int) -> list[tuple[float, float]] | None:
+    raw_polygon = table.get("polygon")
+    if not isinstance(raw_polygon, list) or len(raw_polygon) < min_points:
+        return None
+
+    polygon: list[tuple[float, float]] = []
+    for point in raw_polygon:
+        if not isinstance(point, list) or len(point) != 2:
             return None
-        return x, y, width, height
+        polygon.append((float(point[0]), float(point[1])))
 
-    if "center" in ball and "radius" in ball:
-        center = ball["center"]
-        radius = float(ball["radius"])
-        if radius < min_radius:
-            return None
-        return float(center[0]) - radius, float(center[1]) - radius, radius * 2, radius * 2
-
-    return None
+    return polygon if len(polygon) >= min_points else None
 
 
-def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str, Any]:
+def export_labels(labels: list[TableLabel], args: argparse.Namespace) -> dict[str, Any]:
     manifest: dict[str, Any] = {
-        "class_names": ["ball"],
+        "class_names": ["table"],
         "source_annotations": sorted({str(label.annotation_path) for label in labels}),
         "items": [],
     }
@@ -287,7 +266,7 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
             label_path = args.out / "labels" / split / f"{stem}.txt"
 
             write_image(image_path, frame, args)
-            write_yolo_label(label_path, label, width, height)
+            write_yolo_segmentation_label(label_path, label.polygon, width, height)
 
             manifest["items"].append(
                 {
@@ -296,8 +275,8 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
                     "label": str(label_path),
                     "video": str(label.video_path),
                     "frame": label.frame,
-                    "occluded": label.occluded,
-                    "blurred": label.blurred,
+                    "interpolated": label.interpolated,
+                    "points": len(label.polygon),
                 }
             )
     finally:
@@ -316,7 +295,7 @@ def read_video_frame(capture: cv2.VideoCapture, frame_index: int) -> Any | None:
     return frame if ok else None
 
 
-def choose_split(label: BallLabel, args: argparse.Namespace) -> str:
+def choose_split(label: TableLabel, args: argparse.Namespace) -> str:
     if args.val_ratio == 0:
         return "train"
 
@@ -345,28 +324,23 @@ def write_image(path: Path, frame: Any, args: argparse.Namespace) -> None:
         cv2.imwrite(str(path), frame)
 
 
-def write_yolo_label(path: Path, label: BallLabel, width: int, height: int) -> None:
-    x1 = max(0.0, label.x)
-    y1 = max(0.0, label.y)
-    x2 = min(float(width), label.x + label.width)
-    y2 = min(float(height), label.y + label.height)
+def write_yolo_segmentation_label(
+    path: Path,
+    polygon: list[tuple[float, float]],
+    width: int,
+    height: int,
+) -> None:
+    values: list[float | int] = [0]
+    for x, y in polygon:
+        values.append(clamp(x / width, 0.0, 1.0))
+        values.append(clamp(y / height, 0.0, 1.0))
 
-    box_width = max(1.0, x2 - x1)
-    box_height = max(1.0, y2 - y1)
-    x_center = x1 + box_width / 2
-    y_center = y1 + box_height / 2
+    line = " ".join(str(value) if isinstance(value, int) else f"{value:.8f}" for value in values)
+    path.write_text(f"{line}\n", encoding="utf-8")
 
-    values = [
-        0,
-        x_center / width,
-        y_center / height,
-        box_width / width,
-        box_height / height,
-    ]
-    path.write_text(
-        "{} {:.8f} {:.8f} {:.8f} {:.8f}\n".format(*values),
-        encoding="utf-8",
-    )
+
+def clamp(value: float, low: float, high: float) -> float:
+    return min(high, max(low, value))
 
 
 def write_dataset_yaml(out_dir: Path) -> None:
@@ -374,7 +348,7 @@ def write_dataset_yaml(out_dir: Path) -> None:
 train: images/train
 val: images/val
 names:
-  0: ball
+  0: table
 """
     (out_dir / "dataset.yaml").write_text(yaml, encoding="utf-8")
 

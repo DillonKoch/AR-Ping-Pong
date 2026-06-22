@@ -55,8 +55,9 @@ object detection, while `center` remains useful for tracking and event logic.
 Table labels are polygons with three or more points; include image-edge points
 when the physical table is cropped by the camera frame. The labeler can infer
 frame-corner points when the first and last table polygon points are near the
-video boundary. Interpolated table labels are generated only between manual
-table polygons with matching point counts.
+video boundary, preferring the bottom portion of the frame for near-side cropped
+tables. Interpolated table labels are generated only between manual table
+polygons with matching point counts.
 
 ## Event Labels
 

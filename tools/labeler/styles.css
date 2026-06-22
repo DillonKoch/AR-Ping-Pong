@@ -246,9 +246,32 @@ canvas {
 }
 
 .event-grid button {
+  position: relative;
   min-height: 46px;
   padding: 6px;
   font-size: 13px;
+}
+
+.event-grid button:hover:not(.frame-active) {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
+.event-grid button.frame-active {
+  border-color: var(--accent);
+  background: rgba(38, 217, 162, 0.12);
+  box-shadow: 0 0 0 2px rgba(38, 217, 162, 0.24);
+}
+
+.event-grid button.frame-active::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
 }
 
 .checkbox-row {

@@ -60,6 +60,9 @@ const elements = {
 };
 
 const ctx = elements.canvas.getContext("2d");
+const ANNOTATION_DIRECTORY_DB = "ar-ping-pong-labeler";
+const ANNOTATION_DIRECTORY_STORE = "handles";
+const ANNOTATION_DIRECTORY_KEY = "annotation-directory";
 
 elements.videoInput.addEventListener("change", handleVideoInput);
 elements.annotationInput.addEventListener("change", handleAnnotationInput);
@@ -102,6 +105,7 @@ document.addEventListener("keydown", handleKeydown);
 window.addEventListener("resize", render);
 
 render();
+restoreAnnotationDirectoryHandle();
 
 function createEmptyAnnotations() {
   return {
@@ -119,7 +123,7 @@ function createEmptyAnnotations() {
   };
 }
 
-function handleVideoInput(event) {
+async function handleVideoInput(event) {
   const file = event.target.files[0];
   if (!file) return;
 
@@ -128,9 +132,20 @@ function handleVideoInput(event) {
   elements.video.src = state.videoObjectUrl;
   elements.videoName.textContent = file.name;
 
+  const videoId = getVideoId(file.name);
+  if (state.annotations.video.id && state.annotations.video.id !== videoId) {
+    state.annotations = createEmptyAnnotations();
+    state.history = [];
+  }
   state.annotations.video.filename = file.name;
-  state.annotations.video.id = file.name.replace(/\.[^.]+$/, "");
+  state.annotations.video.id = videoId;
   pushHistory("load-video");
+
+  await tryLoadMatchingAnnotations(file.name);
+}
+
+function getVideoId(filename) {
+  return filename.replace(/\.[^.]+$/, "");
 }
 
 function handleLoadedMetadata() {
@@ -156,23 +171,51 @@ function handleAnnotationInput(event) {
   reader.addEventListener("load", () => {
     try {
       const parsed = JSON.parse(String(reader.result));
-      state.annotations = normalizeAnnotations(parsed);
-      state.fps = state.annotations.video.fps || state.fps;
-      elements.fpsInput.value = String(state.fps);
-      elements.videoName.textContent = state.annotations.video.filename || "Labels loaded";
-      state.activeTablePoints = [];
-      state.activeTableFrame = null;
-      state.activeTablePointDrag = null;
-      state.activeNetPoints = [];
-      state.history = [];
-      interpolateBallLabels();
-      interpolateTableLabels();
-      render();
+      applyAnnotations(parsed);
+      updateSaveStatus(`Loaded ${file.name}`);
     } catch (error) {
       window.alert(`Could not load annotation JSON: ${error.message}`);
     }
   });
   reader.readAsText(file);
+}
+
+async function tryLoadMatchingAnnotations(videoFilename) {
+  const directoryHandle = await getAnnotationDirectoryHandle({ requestPermission: true });
+  if (!directoryHandle) {
+    updateSaveStatus("Choose Save Folder to auto-load labels");
+    return;
+  }
+
+  const annotationFilename = `${videoFilename.replace(/\.[^.]+$/, "")}.labels.json`;
+  try {
+    const fileHandle = await directoryHandle.getFileHandle(annotationFilename);
+    const file = await fileHandle.getFile();
+    const parsed = JSON.parse(await file.text());
+    applyAnnotations(parsed);
+    updateSaveStatus(`Loaded ${annotationFilename}`);
+  } catch (error) {
+    if (error.name === "NotFoundError") {
+      updateSaveStatus(`No saved labels for ${videoFilename}`);
+      return;
+    }
+    window.alert(`Could not auto-load labels: ${error.message}`);
+  }
+}
+
+function applyAnnotations(parsed) {
+  state.annotations = normalizeAnnotations(parsed);
+  state.fps = state.annotations.video.fps || state.fps;
+  elements.fpsInput.value = String(state.fps);
+  elements.videoName.textContent = state.annotations.video.filename || "Labels loaded";
+  state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
+  state.activeNetPoints = [];
+  state.history = [];
+  interpolateBallLabels();
+  interpolateTableLabels();
+  render();
 }
 
 function normalizeAnnotations(input) {
@@ -418,7 +461,7 @@ function finishTablePolygon() {
   const frameLabel = getOrCreateFrameLabel(state.activeTableFrame ?? getCurrentFrame());
   upsertObject(frameLabel, {
     type: "table",
-    polygon: completeTablePolygon(state.activeTablePoints),
+    ...completeTablePolygon(state.activeTablePoints),
     interpolated: false,
   });
   state.activeTablePoints = [];
@@ -429,20 +472,28 @@ function finishTablePolygon() {
 }
 
 function completeTablePolygon(points) {
-  if (points.length < 3) return [...points];
+  if (points.length < 3) return { polygon: [...points] };
 
   const width = state.annotations.video.width || elements.video.videoWidth;
   const height = state.annotations.video.height || elements.video.videoHeight;
-  if (!width || !height) return [...points];
+  if (!width || !height) return { polygon: [...points] };
 
   const margin = Math.max(12, Math.min(width, height) * 0.03);
   const first = snapPointToFrameEdge(points[0], width, height, margin);
   const last = snapPointToFrameEdge(points[points.length - 1], width, height, margin);
 
-  if (!first || !last) return [...points];
+  if (!first || !last) return { polygon: [...points] };
 
-  const boundaryPoints = shortestFrameBoundaryPath(last, first, width, height);
-  return [first.point, ...points.slice(1, -1), last.point, ...boundaryPoints];
+  const direction = chooseBottomFrameBoundaryDirection(last, first, width, height);
+  const boundaryPoints = frameBoundaryCornersBetween(last.position, first.position, width, height, direction);
+  return {
+    polygon: [first.point, ...points.slice(1, -1), last.point, ...boundaryPoints],
+    boundaryClose: {
+      inferred: true,
+      direction,
+      sourcePoints: points,
+    },
+  };
 }
 
 function snapPointToFrameEdge(point, width, height, margin) {
@@ -467,15 +518,11 @@ function snapPointToFrameEdge(point, width, height, margin) {
   };
 }
 
-function shortestFrameBoundaryPath(start, end, width, height) {
+function chooseBottomFrameBoundaryDirection(start, end, width, height) {
   const perimeter = 2 * (width + height);
-  const clockwiseDistance = (end.position - start.position + perimeter) % perimeter;
-  const counterDistance = (start.position - end.position + perimeter) % perimeter;
-
-  if (clockwiseDistance <= counterDistance) {
-    return frameBoundaryCornersBetween(start.position, end.position, width, height, 1);
-  }
-  return frameBoundaryCornersBetween(start.position, end.position, width, height, -1);
+  const bottomCenter = frameBoundaryPosition([width / 2, height], width, height);
+  const clockwiseIncludesBottom = isBoundaryPositionBetween(bottomCenter, start.position, end.position, perimeter, 1);
+  return clockwiseIncludesBottom ? 1 : -1;
 }
 
 function frameBoundaryCornersBetween(startPosition, endPosition, width, height, direction) {
@@ -834,7 +881,11 @@ async function chooseAnnotationSaveFolder() {
       id: "ar-ping-pong-annotations",
       mode: "readwrite",
     });
+    rememberAnnotationDirectoryHandle(state.annotationDirectoryHandle);
     updateSaveStatus(`Saving to ${state.annotationDirectoryHandle.name}/`);
+    if (state.annotations.video.filename) {
+      await tryLoadMatchingAnnotations(state.annotations.video.filename);
+    }
   } catch (error) {
     if (error.name !== "AbortError") {
       window.alert(`Could not choose save folder: ${error.message}`);
@@ -848,9 +899,10 @@ async function downloadAnnotations() {
     type: "application/json",
   });
 
-  if (state.annotationDirectoryHandle) {
+  const directoryHandle = await getAnnotationDirectoryHandle({ requestPermission: true });
+  if (directoryHandle) {
     try {
-      const fileHandle = await state.annotationDirectoryHandle.getFileHandle(filename, {
+      const fileHandle = await directoryHandle.getFileHandle(filename, {
         create: true,
       });
       const writable = await fileHandle.createWritable();
@@ -866,6 +918,91 @@ async function downloadAnnotations() {
 
   downloadBlob(blob, filename);
   updateSaveStatus(`Downloaded ${filename}`);
+}
+
+async function restoreAnnotationDirectoryHandle() {
+  const directoryHandle = await readAnnotationDirectoryHandle().catch(() => null);
+  if (!directoryHandle) return;
+
+  state.annotationDirectoryHandle = directoryHandle;
+  let hasPermission = false;
+  try {
+    hasPermission = await hasDirectoryPermission(directoryHandle, { mode: "readwrite" });
+  } catch {
+    hasPermission = false;
+  }
+  updateSaveStatus(
+    hasPermission
+      ? `Saving to ${directoryHandle.name}/`
+      : `Click Save JSON or load a video to reconnect ${directoryHandle.name}/`,
+  );
+}
+
+async function getAnnotationDirectoryHandle({ requestPermission = false } = {}) {
+  if (!state.annotationDirectoryHandle) return null;
+
+  try {
+    const hasPermission = await hasDirectoryPermission(state.annotationDirectoryHandle, {
+      mode: "readwrite",
+      request: requestPermission,
+    });
+    return hasPermission ? state.annotationDirectoryHandle : null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasDirectoryPermission(directoryHandle, { mode = "read", request = false } = {}) {
+  if (!directoryHandle.queryPermission) return true;
+
+  const options = { mode };
+  if ((await directoryHandle.queryPermission(options)) === "granted") return true;
+  if (!request || !directoryHandle.requestPermission) return false;
+  return (await directoryHandle.requestPermission(options)) === "granted";
+}
+
+function rememberAnnotationDirectoryHandle(directoryHandle) {
+  writeAnnotationDirectoryHandle(directoryHandle).catch(() => {});
+}
+
+async function writeAnnotationDirectoryHandle(directoryHandle) {
+  const db = await openAnnotationHandleDb();
+  if (!db) return;
+
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(ANNOTATION_DIRECTORY_STORE, "readwrite");
+    transaction.objectStore(ANNOTATION_DIRECTORY_STORE).put(directoryHandle, ANNOTATION_DIRECTORY_KEY);
+    transaction.addEventListener("complete", resolve);
+    transaction.addEventListener("error", () => reject(transaction.error));
+  });
+  db.close();
+}
+
+async function readAnnotationDirectoryHandle() {
+  const db = await openAnnotationHandleDb();
+  if (!db) return null;
+
+  const handle = await new Promise((resolve, reject) => {
+    const transaction = db.transaction(ANNOTATION_DIRECTORY_STORE, "readonly");
+    const request = transaction.objectStore(ANNOTATION_DIRECTORY_STORE).get(ANNOTATION_DIRECTORY_KEY);
+    request.addEventListener("success", () => resolve(request.result || null));
+    request.addEventListener("error", () => reject(request.error));
+  });
+  db.close();
+  return handle;
+}
+
+async function openAnnotationHandleDb() {
+  if (!window.indexedDB) return null;
+
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(ANNOTATION_DIRECTORY_DB, 1);
+    request.addEventListener("upgradeneeded", () => {
+      request.result.createObjectStore(ANNOTATION_DIRECTORY_STORE);
+    });
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  });
 }
 
 function updateSaveStatus(message) {
@@ -905,6 +1042,7 @@ function render() {
   resizeCanvasToVideo();
   drawOverlay();
   renderReadout();
+  renderEventButtons();
   renderFrameSummary();
   renderEventList();
 }
@@ -1055,6 +1193,21 @@ function renderReadout() {
   elements.timeline.value = String(elements.video.currentTime || 0);
   elements.timeline.max = String(elements.video.duration || 0);
   elements.timeReadout.textContent = `${formatTime(timeMs)} / ${formatTime(durationMs)} / frame ${frame} / ${state.zoom.toFixed(2)}x`;
+}
+
+function renderEventButtons() {
+  const frame = getCurrentFrame();
+  const activeEvents = new Set(
+    state.annotations.events
+      .filter((event) => event.frame === frame)
+      .map((event) => event.type),
+  );
+
+  document.querySelectorAll("[data-event]").forEach((button) => {
+    const isActive = activeEvents.has(button.dataset.event);
+    button.classList.toggle("frame-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
 }
 
 function renderFrameSummary() {

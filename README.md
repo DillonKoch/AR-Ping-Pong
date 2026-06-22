@@ -67,6 +67,7 @@ Labeler shortcuts:
 - `Shift` + arrows: pan while zoomed
 - Drag on the video: draw the current ball bounding box
 - `Enter`: finish a table polygon with three or more points
+- `F`: flip an inferred cropped-table closure to the other frame edge
 - `Escape`: cancel pending table/net points
 - Drag table vertices: correct saved table polygon points
 - `B`: ball tool
@@ -82,6 +83,13 @@ In Chrome, click `Save Folder` and choose `data/annotations/` before labeling.
 After that, `Save JSON` or `Cmd/Ctrl+S` writes the current `.labels.json` file
 directly into that folder. If direct folder saving is unavailable, the labeler
 falls back to downloading the JSON file.
+
+The labeler names sidecars as `<video-id>.labels.json`, where `<video-id>` is
+the video filename without its extension. For example, `1_ig_reel.MOV` saves to
+`data/annotations/1_ig_reel.labels.json`. Once Chrome has access to
+`data/annotations/`, loading a video will auto-load the matching labels if that
+file exists. If you pick the video before choosing the save folder, choosing the
+folder will retry the auto-load.
 
 ## Ball Detection Training Pipeline
 
@@ -113,11 +121,39 @@ Notebooks:
 
 - `notebooks/colab_hello_world.ipynb`: quick VS Code/Colab runtime smoke test.
 - `notebooks/train_ball_detector_colab.ipynb`: baseline YOLO training notebook.
+- `notebooks/train_table_segmenter_colab.ipynb`: baseline YOLO segmentation
+  notebook for table polygons.
 
 Start with `yolo26n.pt` at `imgsz=960`, then compare `yolo26s.pt` once the
 export/training loop works. For honest validation, collect several videos and
 export with `--split-mode video` so train and validation frames come from
 different source videos.
+
+## Table Segmentation Training Pipeline
+
+After labeling table polygons, export them into an Ultralytics YOLO segmentation
+dataset:
+
+```bash
+python3 tools/export_yolo/export_table_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/table_yolo_seg \
+  --clean
+```
+
+For early smoke tests, the exporter includes interpolated table labels. Use
+`--manual-only` later when you want to train only on human-corrected polygons.
+
+Train a first table segmenter locally or in Colab:
+
+```bash
+yolo segment train \
+  model=yolo26n-seg.pt \
+  data=data/exports/table_yolo_seg/dataset.yaml \
+  epochs=30 \
+  imgsz=960
+```
 
 ## Event Detection Training Pipeline
 
@@ -162,7 +198,9 @@ alone.
 For cropped tables, start the table polygon at one point where the table leaves
 the video frame and end at the other frame-edge exit point. When both endpoints
 are near the frame boundary, the labeler closes the polygon along the video edge
-and inserts any needed frame corners automatically.
+and inserts any needed frame corners automatically. Because the camera user is
+on the near side of the table, cropped-table closure always prefers the bottom
+portion of the frame.
 
 Table labels auto-interpolate between manual keyframes when both table polygons
 have the same number of points. If the point counts differ, that gap is skipped
