@@ -155,6 +155,34 @@ yolo segment train \
   imgsz=960
 ```
 
+## Combined Table + Net Geometry Pipeline
+
+We currently have a standalone table segmenter, not a trained net detector. The
+first net-model draft is a combined YOLO segmentation model with two classes:
+`table` and `net`. Net line labels are converted into thin segmentation bands.
+
+```bash
+python3 tools/export_yolo/export_geometry_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/geometry_yolo_seg \
+  --clean
+```
+
+Then train:
+
+```bash
+yolo segment train \
+  model=yolo26n-seg.pt \
+  data=data/exports/geometry_yolo_seg/dataset.yaml \
+  epochs=30 \
+  imgsz=960
+```
+
+If the net band is too skinny or too wide, rerun the exporter with
+`--net-thickness-px`. If segmentation is not precise enough for the sagging net
+line, the next model should be a dedicated three-keypoint net detector.
+
 ## Event Detection Training Pipeline
 
 After labeling events, export short video clips centered on those events:

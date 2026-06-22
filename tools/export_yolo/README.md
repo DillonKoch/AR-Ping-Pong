@@ -103,3 +103,48 @@ python3 tools/export_yolo/predict_table_labels.py \
 
 Load the resulting JSON with the labeler's Predictions button. Predictions are
 only overlays until accepted into a frame label.
+
+## Export Combined Table + Net Segmentation
+
+There is not a trained net model yet. The first draft is a combined geometry
+segmenter with two classes:
+
+- `0`: table
+- `1`: net
+
+The exporter writes table polygons directly and converts each labeled net line
+into a thin segmentation band.
+
+```bash
+python3 tools/export_yolo/export_geometry_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/geometry_yolo_seg \
+  --clean
+```
+
+Tune the net mask thickness if the training labels look too skinny or too wide:
+
+```bash
+python3 tools/export_yolo/export_geometry_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/geometry_yolo_seg \
+  --net-thickness-px 18 \
+  --clean
+```
+
+Train it with the same Ultralytics segmentation command:
+
+```bash
+yolo segment train \
+  model=yolo26n-seg.pt \
+  data=data/exports/geometry_yolo_seg/dataset.yaml \
+  epochs=30 \
+  imgsz=960
+```
+
+This combined model is the quickest path because it predicts the table and net
+in one pass. If the net masks are too imprecise, the next version should be a
+dedicated keypoint/pose model for left endpoint, midpoint/dip, and right
+endpoint.
