@@ -388,6 +388,7 @@ function updateFps() {
 function togglePlayback() {
   if (!elements.video.src) return;
   if (elements.video.paused) {
+    flushPendingNetBeforeFrameChange();
     elements.video.play();
   } else {
     elements.video.pause();
@@ -396,6 +397,7 @@ function togglePlayback() {
 
 function stepFrames(count) {
   if (!elements.video.src) return;
+  flushPendingNetBeforeFrameChange();
   elements.video.pause();
   elements.video.currentTime = clampTime(elements.video.currentTime + count / state.fps);
   render();
@@ -403,6 +405,7 @@ function stepFrames(count) {
 
 function jumpToFrameInput() {
   const frame = Number(elements.frameInput.value) || 0;
+  flushPendingNetBeforeFrameChange();
   elements.video.pause();
   elements.video.currentTime = clampTime(frame / state.fps);
   render();
@@ -410,6 +413,7 @@ function jumpToFrameInput() {
 
 function handleTimelineInput() {
   if (!elements.video.src) return;
+  flushPendingNetBeforeFrameChange();
   elements.video.currentTime = Number(elements.timeline.value);
   render();
 }
@@ -479,6 +483,9 @@ function handleKeydown(event) {
 }
 
 function setTool(tool) {
+  if (state.tool === "net" && tool !== "net") {
+    flushPendingNetBeforeFrameChange();
+  }
   state.tool = tool;
   state.activeTablePoints = [];
   state.activeTableFrame = null;
@@ -640,7 +647,20 @@ function finishTablePolygon() {
   render();
 }
 
-function finishNetLine() {
+function flushPendingNetBeforeFrameChange() {
+  if (state.activeNetPoints.length >= 2) {
+    finishNetLine({ shouldRender: false });
+    return;
+  }
+
+  if (state.activeNetPoints.length > 0) {
+    state.activeNetPoints = [];
+    state.activeNetFrame = null;
+    state.activeNetPointDrag = null;
+  }
+}
+
+function finishNetLine({ shouldRender = true } = {}) {
   if (state.activeNetPoints.length < 2) return;
 
   pushHistory("draw-net");
@@ -655,7 +675,7 @@ function finishNetLine() {
   state.activeNetPointDrag = null;
   interpolateNetLabels();
   cleanupEmptyFrames();
-  render();
+  if (shouldRender) render();
 }
 
 function closeCurrentTableAlongFrameEdge() {
@@ -1470,8 +1490,8 @@ function renderViewportTransform() {
   elements.viewport.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
   elements.zoomOutButton.disabled = state.zoom <= 1;
   elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
-  elements.finishTableButton.disabled = state.activeTablePoints.length < 3;
-  elements.finishNetButton.disabled = state.activeNetPoints.length < 2;
+  elements.finishTableButton.disabled = getCurrentPendingTablePoints().length < 3;
+  elements.finishNetButton.disabled = getCurrentPendingNetPoints().length < 2;
   const currentObjects = getFrameLabel(getCurrentFrame())?.objects || [];
   elements.clearBallButton.disabled = !currentObjects.some((object) => object.type === "ball");
   elements.clearTableButton.disabled = !currentObjects.some((object) => object.type === "table");
@@ -1510,9 +1530,17 @@ function drawOverlay() {
     frameLabel.objects.forEach(drawObject);
   }
 
-  drawPendingPolygon(state.activeTablePoints, "#34d399");
-  drawPendingPolyline(state.activeNetPoints, "#f8fafc");
+  drawPendingPolygon(getCurrentPendingTablePoints(), "#34d399");
+  drawPendingPolyline(getCurrentPendingNetPoints(), "#f8fafc");
   drawActiveBallDrag();
+}
+
+function getCurrentPendingTablePoints() {
+  return state.activeTableFrame === getCurrentFrame() ? state.activeTablePoints : [];
+}
+
+function getCurrentPendingNetPoints() {
+  return state.activeNetFrame === getCurrentFrame() ? state.activeNetPoints : [];
 }
 
 function drawObject(object) {
