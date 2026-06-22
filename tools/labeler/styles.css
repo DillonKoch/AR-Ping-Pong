@@ -296,27 +296,6 @@ canvas {
   font-weight: 750;
 }
 
-.shot-chart {
-  position: static;
-  display: block;
-  width: 100%;
-  max-width: none;
-  height: auto;
-  max-height: none;
-  transform: none;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #07110d;
-  cursor: pointer;
-}
-
-.chart-summary {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 750;
-}
-
 .summary-list,
 .event-list {
   display: grid;

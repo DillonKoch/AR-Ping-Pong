@@ -100,27 +100,6 @@ Supported event types:
 - `ball_lost`
 - `uncertain`
 
-## Shot Chart Projection
-
-The labeler can project labeled bounce events onto a normalized top-down table
-chart. A bounce point is projected when the bounce event frame, or a nearby
-frame inside `windowFrames`, has both:
-
-- a `ball` object with `center`
-- a `table` object with a polygon of at least four points
-
-The projection estimates four table corners from the polygon and solves a
-homography from image pixels into normalized table coordinates:
-
-```text
-u = 0.0 left edge, 1.0 right edge
-v = 0.0 far edge, 1.0 near edge
-```
-
-This works best when table labels use the four visible table corners in a
-consistent order. Extra inferred frame-boundary points are tolerated, but a
-future dedicated table-corner label will be more precise.
-
 ## Export Strategy
 
 Keep annotation JSON as the source of truth. Export scripts can later convert it
