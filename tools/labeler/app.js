@@ -1447,10 +1447,12 @@ function renderShotChart() {
     shotCtx.restore();
   });
 
-  shotCtx.fillStyle = "#92a3b4";
-  shotCtx.font = "700 11px system-ui, sans-serif";
-  shotCtx.fillText("far", table.x + 6, table.y + 14);
-  shotCtx.fillText("near", table.x + 6, table.y + table.height - 6);
+  shotCtx.fillStyle = "rgba(238, 245, 255, 0.78)";
+  shotCtx.font = "800 12px system-ui, sans-serif";
+  shotCtx.textAlign = "center";
+  shotCtx.textBaseline = "middle";
+  shotCtx.fillText("FAR SIDE", table.x + table.width / 2, table.y + table.height * 0.25);
+  shotCtx.fillText("NEAR SIDE", table.x + table.width / 2, table.y + table.height * 0.75);
   shotCtx.restore();
 
   const usable = points.length;
