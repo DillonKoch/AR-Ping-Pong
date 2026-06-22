@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AR Ping Pong</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="display-shell" aria-label="AR Ping Pong scorekeeper">
+      <section class="scoreboard" aria-live="polite">
+        <div class="player player-a">
+          <p class="player-label" id="playerAName">Player A</p>
+          <p class="score" id="scoreA">0</p>
+          <p class="server" id="serverA">Serve</p>
+        </div>
+
+        <div class="match-state">
+          <p class="mode">Game 1</p>
+          <p class="status" id="statusText">First to 11, win by 2</p>
+        </div>
+
+        <div class="player player-b">
+          <p class="player-label" id="playerBName">Player B</p>
+          <p class="score" id="scoreB">0</p>
+          <p class="server" id="serverB">Receive</p>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Score controls">
+        <button class="focusable primary" data-action="point-a">A +1</button>
+        <button class="focusable primary" data-action="point-b">B +1</button>
+        <button class="focusable" data-action="undo">Undo</button>
+        <button class="focusable" data-action="reset-game">Reset</button>
+      </section>
+
+      <section class="history" aria-label="Point history">
+        <div class="history-header">
+          <p>Rally Log</p>
+          <button class="focusable icon-button" data-action="reset-match" aria-label="Reset match">Clear</button>
+        </div>
+        <ol id="pointLog"></ol>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

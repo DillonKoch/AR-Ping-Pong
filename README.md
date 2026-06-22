@@ -1,1 +1,74 @@
-# AR-Ping-Pong
+# AR Ping Pong
+
+A Meta Ray-Ban Display glasses prototype for ping pong assistance.
+
+The long-term product is a glasses-first ping pong companion: manual scorekeeping,
+AI referee support, ball/table tracking, event detection, rally history, shot charts,
+and lightweight coaching overlays. This repo starts with the lowest-risk useful
+feature: a display-friendly manual scorekeeper that can run as a Web App.
+
+## Why Start With A Web App
+
+Meta's Display Glasses developer preview supports two paths:
+
+- **Web Apps**: standard HTML, CSS, and JavaScript, deployed through a public HTTPS
+  URL. This is the fastest path for prototyping HUDs, scoring flows, menus, local
+  state, and Neural Band/D-pad interactions.
+- **Device Access Toolkit**: native iOS/Android integration for deeper hardware
+  access such as camera, audio, and display. This is likely the right path for
+  ball tracking, table detection, bounce detection, net-hit detection, and a full
+  AI referee.
+
+This repo uses the Web App path first so we can validate the UX on the 600x600
+display before investing in the native perception stack.
+
+## Current Prototype
+
+- 600x600 glasses-style viewport
+- Manual scorekeeping for two players
+- Arrow-key/D-pad navigation
+- Serve indicator and basic win-by-two game-point status
+- Match log stored in browser local storage
+- Reset controls for the current game and the whole match
+
+Open `index.html` in a browser and use arrow keys plus `Enter`.
+
+## Controls
+
+- `Left` / `Right`: move focus between controls
+- `Enter` / `Space`: activate selected control
+- `A`: add point for player A
+- `L`: add point for player B
+- `U`: undo the last point
+- `R`: reset the current game
+
+## Product Roadmap
+
+1. **Manual scorekeeping MVP**
+   - Fast scoring with Neural Band-friendly gestures.
+   - Clear score, server, game point, and match history overlays.
+2. **Match tools**
+   - Game/match formats, side switching, doubles support, exportable match logs.
+3. **Assisted referee**
+   - Point start/stop detection, bounce/net-hit event candidates, confidence UI,
+     and human confirmation.
+4. **Computer vision**
+   - Table detection, ball tracking, paddle/player context, bounce localization.
+5. **Analytics**
+   - Rally lengths, serve success, shot placement, heatmaps, and shot charts.
+
+## Implementation Notes
+
+The Web App prototype intentionally keeps logic in plain JavaScript. The later
+native perception work should be isolated behind an event stream contract, for
+example:
+
+```ts
+type RefereeEvent =
+  | { type: "point_started"; at: number }
+  | { type: "bounce"; side: "near" | "far"; x: number; y: number; confidence: number }
+  | { type: "net_hit"; confidence: number }
+  | { type: "point_ended"; winner: "a" | "b"; confidence: number };
+```
+
+That lets the HUD stay stable while the sensing implementation evolves.
