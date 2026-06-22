@@ -42,7 +42,7 @@ button,
 
 button {
   min-height: 38px;
-  padding: 8px 12px;
+  padding: 7px 11px;
   font-weight: 750;
 }
 
@@ -121,7 +121,8 @@ h1 {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: fit-content(760px) minmax(360px, 1fr);
+  align-items: start;
   gap: 16px;
   padding: 16px;
 }
@@ -135,11 +136,17 @@ h1 {
 
 .stage-panel {
   min-width: 0;
+  width: fit-content;
+  max-width: 100%;
   padding: 12px;
 }
 
 .video-toolbar {
-  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(6, max-content);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
 }
 
 .video-toolbar label {
@@ -211,14 +218,14 @@ canvas {
 .side-panel {
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .panel-section {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
   background: rgba(255, 255, 255, 0.025);
 }
 
@@ -246,7 +253,7 @@ canvas {
 
 .event-grid button {
   position: relative;
-  min-height: 46px;
+  min-height: 40px;
   padding: 6px;
   font-size: 13px;
 }
@@ -375,7 +382,4 @@ canvas {
     grid-template-columns: 1fr;
   }
 
-  .stage-wrap {
-    min-height: 320px;
-  }
 }
