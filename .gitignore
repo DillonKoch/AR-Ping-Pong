@@ -1,6 +1,10 @@
+.DS_Store
+**/.DS_Store
+
 data/videos/*
 data/annotations/*
 data/exports/*
+runs/
 
 !data/videos/.gitkeep
 !data/annotations/.gitkeep

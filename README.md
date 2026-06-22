@@ -69,6 +69,73 @@ Labeler shortcuts:
 - `Delete`: clear current frame
 - `Cmd/Ctrl+S`: save annotation JSON
 
+## Ball Detection Training Pipeline
+
+After labeling ball positions, export the labels into an Ultralytics YOLO
+dataset:
+
+```bash
+python3 -m pip install -r tools/export_yolo/requirements.txt
+python3 tools/export_yolo/export_ball_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/ball_yolo
+```
+
+The exporter reads labeler JSON files, extracts the labeled video frames, writes
+YOLO label text files, and creates `data/exports/ball_yolo/dataset.yaml`.
+
+Train a first detector locally or in Colab:
+
+```bash
+yolo detect train \
+  model=yolo26n.pt \
+  data=data/exports/ball_yolo/dataset.yaml \
+  epochs=100 \
+  imgsz=960
+```
+
+Notebooks:
+
+- `notebooks/colab_hello_world.ipynb`: quick VS Code/Colab runtime smoke test.
+- `notebooks/train_ball_detector_colab.ipynb`: baseline YOLO training notebook.
+
+Start with `yolo26n.pt` at `imgsz=960`, then compare `yolo26s.pt` once the
+export/training loop works. For honest validation, collect several videos and
+export with `--split-mode video` so train and validation frames come from
+different source videos.
+
+## Event Detection Training Pipeline
+
+After labeling events, export short video clips centered on those events:
+
+```bash
+python3 -m pip install -r tools/export_events/requirements.txt
+python3 tools/export_events/export_event_clips.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/events
+```
+
+The exporter creates class folders of clips plus `metadata.csv` and
+`class_names.json`. Use background clips once you have longer videos:
+
+```bash
+python3 tools/export_events/export_event_clips.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/events \
+  --background-per-video 20 \
+  --split-mode video
+```
+
+Train a first temporal classifier with
+`notebooks/train_event_classifier_colab.ipynb`. This is intentionally a baseline:
+short clips around event labels, a torchvision video model, and simple train/val
+metrics. The likely long-term referee will combine ball tracking, table geometry,
+rules, and a temporal classifier rather than relying on event classification
+alone.
+
 ## Controls
 
 - `Left` / `Right`: move focus between controls
