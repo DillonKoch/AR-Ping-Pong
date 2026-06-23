@@ -656,12 +656,14 @@ function handleCanvasPointerDown(event) {
   const frame = getCurrentFrame();
 
   if (state.tool === "ball") {
+    const removedExistingBall = removeVisibleBallLabel(frame);
     elements.canvas.setPointerCapture(event.pointerId);
     state.activeBallDrag = {
       pointerId: event.pointerId,
       frame,
       start: point,
       current: point,
+      historyPushed: removedExistingBall,
     };
     render();
     return;
@@ -718,6 +720,17 @@ function handleCanvasPointerDown(event) {
 
   cleanupEmptyFrames();
   render();
+}
+
+function removeVisibleBallLabel(frame) {
+  const frameLabel = getFrameLabel(frame);
+  const hasVisibleBall = frameLabel?.objects.some((object) => object.type === "ball" && !object.absent);
+  if (!hasVisibleBall) return false;
+
+  pushHistory("redraw-ball");
+  frameLabel.objects = frameLabel.objects.filter((object) => object.type !== "ball");
+  cleanupEmptyFrames();
+  return true;
 }
 
 function findNearestTablePoint(frame, canvasX, canvasY) {
@@ -1010,11 +1023,12 @@ function handleCanvasPointerUp(event) {
 
   const ball = ballFromDrag(drag.start, drag.current);
   if (!ball) {
+    cleanupEmptyFrames();
     render();
     return;
   }
 
-  pushHistory("draw-ball");
+  if (!drag.historyPushed) pushHistory("draw-ball");
   const frameLabel = getOrCreateFrameLabel(drag.frame);
   upsertObject(frameLabel, {
     type: "ball",
