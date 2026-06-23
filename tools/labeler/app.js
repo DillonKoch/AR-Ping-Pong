@@ -58,6 +58,8 @@ const elements = {
   videoName: document.querySelector("#videoName"),
   timeReadout: document.querySelector("#timeReadout"),
   saveStatus: document.querySelector("#saveStatus"),
+  frameLabelStatus: document.querySelector("#frameLabelStatus"),
+  frameLabelStatusText: document.querySelector("#frameLabelStatusText"),
   frameSummary: document.querySelector("#frameSummary"),
   eventList: document.querySelector("#eventList"),
   occludedInput: document.querySelector("#occludedInput"),
@@ -71,6 +73,7 @@ const elements = {
   predictionStatus: document.querySelector("#predictionStatus"),
   acceptTablePredictionButton: document.querySelector("#acceptTablePredictionButton"),
   acceptBallPredictionButton: document.querySelector("#acceptBallPredictionButton"),
+  acceptNetPredictionButton: document.querySelector("#acceptNetPredictionButton"),
   togglePredictionsButton: document.querySelector("#togglePredictionsButton"),
 };
 
@@ -116,6 +119,7 @@ elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
 elements.acceptTablePredictionButton.addEventListener("click", acceptCurrentTablePrediction);
 elements.acceptBallPredictionButton.addEventListener("click", acceptCurrentBallPrediction);
+elements.acceptNetPredictionButton.addEventListener("click", acceptCurrentNetPrediction);
 elements.togglePredictionsButton.addEventListener("click", togglePredictions);
 
 document.querySelectorAll("[data-tool]").forEach((button) => {
@@ -306,6 +310,17 @@ function normalizePredictionFrame(frameInput) {
         };
       }
 
+      if (object.type === "net") {
+        const line = normalizePredictionLine(object.line);
+        if (!line) return null;
+        return {
+          type: "net",
+          line,
+          confidence: Number.isFinite(Number(object.confidence)) ? Number(object.confidence) : null,
+          predicted: true,
+        };
+      }
+
       if (object.type !== "table" || !Array.isArray(object.polygon)) return null;
       const polygon = object.polygon
         .map((point) => Array.isArray(point) && point.length >= 2 ? [round(Number(point[0])), round(Number(point[1]))] : null)
@@ -346,6 +361,15 @@ function normalizePredictionBbox(object) {
   return null;
 }
 
+function normalizePredictionLine(rawLine) {
+  if (!Array.isArray(rawLine) || rawLine.length < 2 || rawLine.length > 3) return null;
+
+  const line = rawLine
+    .map((point) => Array.isArray(point) && point.length >= 2 ? [round(Number(point[0])), round(Number(point[1]))] : null)
+    .filter(Boolean);
+  return line.length >= 2 ? line : null;
+}
+
 async function tryLoadMatchingAnnotations(videoFilename) {
   const directoryHandle = await getAnnotationDirectoryHandle({ requestPermission: true });
   if (!directoryHandle) {
@@ -371,6 +395,8 @@ async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle
   const missing = [];
   const annotationFilename = `${getVideoId(videoFilename)}.labels.json`;
   const predictionFilenames = [
+    `${getVideoId(videoFilename)}.geometry_predictions.json`,
+    `${getVideoId(videoFilename)}.net_predictions.json`,
     `${getVideoId(videoFilename)}.table_predictions.json`,
     `${getVideoId(videoFilename)}.ball_predictions.json`,
   ];
@@ -649,11 +675,16 @@ function restoreStageScrollRatios(ratios) {
 }
 
 function handleCanvasPointerDown(event) {
-  if (!elements.video.src || state.tool === "select") return;
+  if (!elements.video.src) return;
 
   const localPoint = getCanvasLocalPoint(event);
   const point = canvasPointToVideoPoint(localPoint.x, localPoint.y);
   const frame = getCurrentFrame();
+
+  if (state.tool === "table" || state.tool === "net" || state.tool === "select") {
+    if (startNearestPointDrag(event, frame, localPoint.x, localPoint.y)) return;
+    if (state.tool === "select") return;
+  }
 
   if (state.tool === "ball") {
     const removedExistingBall = removeVisibleBallLabel(frame);
@@ -670,20 +701,6 @@ function handleCanvasPointerDown(event) {
   }
 
   if (state.tool === "table") {
-    const tablePoint = findNearestTablePoint(frame, localPoint.x, localPoint.y);
-    if (tablePoint) {
-      pushHistory("drag-table-point");
-      tablePoint.table.interpolated = false;
-      state.activeTablePointDrag = {
-        pointerId: event.pointerId,
-        table: tablePoint.table,
-        pointIndex: tablePoint.pointIndex,
-      };
-      elements.canvas.setPointerCapture(event.pointerId);
-      render();
-      return;
-    }
-
     if (state.activeTablePoints.length > 0 && state.activeTableFrame !== frame) {
       state.activeTablePoints = [];
     }
@@ -694,20 +711,6 @@ function handleCanvasPointerDown(event) {
   }
 
   if (state.tool === "net") {
-    const netPoint = findNearestNetPoint(frame, localPoint.x, localPoint.y);
-    if (netPoint && state.activeNetPoints.length === 0) {
-      pushHistory("drag-net-point");
-      netPoint.net.interpolated = false;
-      state.activeNetPointDrag = {
-        pointerId: event.pointerId,
-        net: netPoint.net,
-        pointIndex: netPoint.pointIndex,
-      };
-      elements.canvas.setPointerCapture(event.pointerId);
-      render();
-      return;
-    }
-
     if (state.activeNetPoints.length > 0 && state.activeNetFrame !== frame) {
       state.activeNetPoints = [];
     }
@@ -720,6 +723,57 @@ function handleCanvasPointerDown(event) {
 
   cleanupEmptyFrames();
   render();
+}
+
+function startNearestPointDrag(event, frame, canvasX, canvasY) {
+  const candidates = [];
+
+  if (state.tool === "table" || state.tool === "select") {
+    candidates.push(
+      findNearestPendingTablePoint(frame, canvasX, canvasY),
+      findNearestTablePoint(frame, canvasX, canvasY),
+    );
+  }
+
+  if (state.tool === "net" || state.tool === "select") {
+    candidates.push(
+      findNearestPendingNetPoint(frame, canvasX, canvasY),
+      findNearestNetPoint(frame, canvasX, canvasY),
+    );
+  }
+
+  const nearest = candidates
+    .filter(Boolean)
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (!nearest) return false;
+
+  if (nearest.type === "table") {
+    if (nearest.table) {
+      pushHistory("drag-table-point");
+      nearest.table.interpolated = false;
+    }
+    state.activeTablePointDrag = {
+      pointerId: event.pointerId,
+      table: nearest.table || null,
+      points: nearest.points || null,
+      pointIndex: nearest.pointIndex,
+    };
+  } else {
+    if (nearest.net) {
+      pushHistory("drag-net-point");
+      nearest.net.interpolated = false;
+    }
+    state.activeNetPointDrag = {
+      pointerId: event.pointerId,
+      net: nearest.net || null,
+      points: nearest.points || null,
+      pointIndex: nearest.pointIndex,
+    };
+  }
+
+  elements.canvas.setPointerCapture(event.pointerId);
+  render();
+  return true;
 }
 
 function removeVisibleBallLabel(frame) {
@@ -738,16 +792,8 @@ function findNearestTablePoint(frame, canvasX, canvasY) {
   const table = frameLabel?.objects.find((object) => object.type === "table" && !object.absent);
   if (!table) return null;
 
-  let nearest = null;
-  table.polygon.forEach(([x, y], pointIndex) => {
-    const point = videoPointToCanvasPoint(x, y);
-    const distance = Math.hypot(point.x - canvasX, point.y - canvasY);
-    if (distance <= 14 && (!nearest || distance < nearest.distance)) {
-      nearest = { table, pointIndex, distance };
-    }
-  });
-
-  return nearest;
+  const nearest = findNearestPointInList(table.polygon, canvasX, canvasY);
+  return nearest ? { type: "table", table, ...nearest } : null;
 }
 
 function findNearestNetPoint(frame, canvasX, canvasY) {
@@ -755,12 +801,29 @@ function findNearestNetPoint(frame, canvasX, canvasY) {
   const net = frameLabel?.objects.find((object) => object.type === "net" && !object.absent);
   if (!net || !Array.isArray(net.line)) return null;
 
+  const nearest = findNearestPointInList(net.line, canvasX, canvasY);
+  return nearest ? { type: "net", net, ...nearest } : null;
+}
+
+function findNearestPendingTablePoint(frame, canvasX, canvasY) {
+  if (state.activeTableFrame !== frame || state.activeTablePoints.length === 0) return null;
+  const nearest = findNearestPointInList(state.activeTablePoints, canvasX, canvasY);
+  return nearest ? { type: "table", points: state.activeTablePoints, ...nearest } : null;
+}
+
+function findNearestPendingNetPoint(frame, canvasX, canvasY) {
+  if (state.activeNetFrame !== frame || state.activeNetPoints.length === 0) return null;
+  const nearest = findNearestPointInList(state.activeNetPoints, canvasX, canvasY);
+  return nearest ? { type: "net", points: state.activeNetPoints, ...nearest } : null;
+}
+
+function findNearestPointInList(points, canvasX, canvasY) {
   let nearest = null;
-  net.line.forEach(([x, y], pointIndex) => {
+  points.forEach(([x, y], pointIndex) => {
     const point = videoPointToCanvasPoint(x, y);
     const distance = Math.hypot(point.x - canvasX, point.y - canvasY);
     if (distance <= 14 && (!nearest || distance < nearest.distance)) {
-      nearest = { net, pointIndex, distance };
+      nearest = { pointIndex, distance };
     }
   });
 
@@ -978,7 +1041,8 @@ function handleCanvasPointerMove(event) {
   }
 
   if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
-    state.activeTablePointDrag.table.polygon[state.activeTablePointDrag.pointIndex] = snapTablePoint([
+    const points = state.activeTablePointDrag.table?.polygon || state.activeTablePointDrag.points;
+    points[state.activeTablePointDrag.pointIndex] = snapTablePoint([
       round(point.x),
       round(point.y),
     ]);
@@ -987,7 +1051,8 @@ function handleCanvasPointerMove(event) {
   }
 
   if (state.activeNetPointDrag && state.activeNetPointDrag.pointerId === event.pointerId) {
-    state.activeNetPointDrag.net.line[state.activeNetPointDrag.pointIndex] = [
+    const points = state.activeNetPointDrag.net?.line || state.activeNetPointDrag.points;
+    points[state.activeNetPointDrag.pointIndex] = [
       round(point.x),
       round(point.y),
     ];
@@ -998,19 +1063,25 @@ function handleCanvasPointerMove(event) {
 
 function handleCanvasPointerUp(event) {
   if (state.activeTablePointDrag && state.activeTablePointDrag.pointerId === event.pointerId) {
+    const wasSavedLabel = Boolean(state.activeTablePointDrag.table);
     state.activeTablePointDrag = null;
     elements.canvas.releasePointerCapture(event.pointerId);
-    interpolateTableLabels();
-    cleanupEmptyFrames();
+    if (wasSavedLabel) {
+      interpolateTableLabels();
+      cleanupEmptyFrames();
+    }
     render();
     return;
   }
 
   if (state.activeNetPointDrag && state.activeNetPointDrag.pointerId === event.pointerId) {
+    const wasSavedLabel = Boolean(state.activeNetPointDrag.net);
     state.activeNetPointDrag = null;
     elements.canvas.releasePointerCapture(event.pointerId);
-    interpolateNetLabels();
-    cleanupEmptyFrames();
+    if (wasSavedLabel) {
+      interpolateNetLabels();
+      cleanupEmptyFrames();
+    }
     render();
     return;
   }
@@ -1206,6 +1277,26 @@ function acceptCurrentBallPrediction() {
   render();
 }
 
+function acceptCurrentNetPrediction() {
+  const prediction = getCurrentNetPrediction();
+  if (!prediction) return;
+
+  pushHistory("accept-net-prediction");
+  const frame = getCurrentFrame();
+  const frameLabel = getOrCreateFrameLabel(frame);
+  upsertObject(frameLabel, {
+    type: "net",
+    line: prediction.line.map((point) => [...point]),
+    confidence: prediction.confidence,
+    predictedFromModel: true,
+    interpolated: false,
+  });
+  interpolateNetLabels();
+  cleanupEmptyFrames();
+  setTool("net");
+  render();
+}
+
 function togglePredictions() {
   state.showPredictions = !state.showPredictions;
   render();
@@ -1221,6 +1312,12 @@ function getCurrentBallPrediction() {
   if (!state.showPredictions) return null;
   const framePrediction = state.predictions.frames.find((item) => item.frame === getCurrentFrame());
   return framePrediction?.objects.find((object) => object.type === "ball") || null;
+}
+
+function getCurrentNetPrediction() {
+  if (!state.showPredictions) return null;
+  const framePrediction = state.predictions.frames.find((item) => item.frame === getCurrentFrame());
+  return framePrediction?.objects.find((object) => object.type === "net") || null;
 }
 
 function interpolateBallLabels() {
@@ -1652,6 +1749,7 @@ function render() {
   renderViewportTransform();
   drawOverlay();
   renderReadout();
+  renderFrameLabelStatus();
   renderEventButtons();
   updatePredictionStatus();
   renderFrameSummary();
@@ -1670,6 +1768,68 @@ function renderViewportTransform() {
   elements.clearTableButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "table" && object.absent);
   elements.clearNetButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "net" && object.absent);
   elements.closeTableEdgeButton.disabled = !currentObjects.some((object) => object.type === "table" && !object.absent);
+}
+
+function renderFrameLabelStatus() {
+  const status = getCurrentToolLabelStatus();
+  elements.frameLabelStatus.className = `frame-label-status status-${status.kind}`;
+  elements.stageWrap.dataset.labelStatus = status.kind;
+  elements.frameLabelStatusText.textContent = status.label;
+}
+
+function getCurrentToolLabelStatus() {
+  const type = getStatusObjectType();
+  if (!type) {
+    return { kind: "neutral", label: "Select mode" };
+  }
+
+  const pendingCount = getPendingPointCount(type);
+  if (pendingCount > 0) {
+    return { kind: "pending", label: `Pending ${capitalize(type)} (${pendingCount})` };
+  }
+
+  const object = getFrameLabel(getCurrentFrame())?.objects.find((item) => item.type === type);
+  if (object?.absent) {
+    return { kind: "absent", label: `${capitalize(type)} Off` };
+  }
+  if (object?.interpolated) {
+    return { kind: "interpolated", label: `Interpolated ${capitalize(type)}` };
+  }
+  if (object) {
+    return { kind: "manual", label: object.predictedFromModel ? `Accepted ${capitalize(type)}` : `Manual ${capitalize(type)}` };
+  }
+
+  const prediction = getCurrentPredictionForType(type);
+  if (prediction) {
+    return { kind: "predicted", label: `Prediction ${capitalize(type)}` };
+  }
+
+  return { kind: "missing", label: `No ${capitalize(type)}` };
+}
+
+function getStatusObjectType() {
+  if (state.tool === "table") return "table";
+  if (state.tool === "net") return "net";
+  if (state.tool === "ball") return "ball";
+  return null;
+}
+
+function getPendingPointCount(type) {
+  if (type === "table" && state.activeTableFrame === getCurrentFrame()) return state.activeTablePoints.length;
+  if (type === "net" && state.activeNetFrame === getCurrentFrame()) return state.activeNetPoints.length;
+  if (type === "ball" && state.activeBallDrag?.frame === getCurrentFrame()) return 1;
+  return 0;
+}
+
+function getCurrentPredictionForType(type) {
+  if (type === "table") return getCurrentTablePrediction();
+  if (type === "net") return getCurrentNetPrediction();
+  if (type === "ball") return getCurrentBallPrediction();
+  return null;
+}
+
+function capitalize(value) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function resizeCanvasToVideo() {
@@ -1698,7 +1858,9 @@ function drawOverlay() {
 
   const tablePrediction = getCurrentTablePrediction();
   const ballPrediction = getCurrentBallPrediction();
+  const netPrediction = getCurrentNetPrediction();
   if (tablePrediction) drawPredictionTable(tablePrediction);
+  if (netPrediction) drawPredictionNet(netPrediction);
   if (ballPrediction) drawPredictionBall(ballPrediction);
 
   const frameLabel = getFrameLabel(getCurrentFrame());
@@ -1759,6 +1921,25 @@ function drawPredictionTable(table) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawPredictionNet(net) {
+  drawLine(net.line, "#ffc857", {
+    lineDash: [8, 6],
+    lineWidth: 3,
+  });
+  net.line.forEach(([x, y]) => {
+    const point = videoPointToCanvasPoint(x, y);
+    ctx.save();
+    ctx.fillStyle = "#ffc857";
+    ctx.strokeStyle = "#0b0f14";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     ctx.restore();
@@ -1846,12 +2027,13 @@ function drawPolygon(points, color, closed = true, options = {}) {
   ctx.restore();
 }
 
-function drawLine(points, color) {
+function drawLine(points, color, options = {}) {
   if (!points || points.length < 2) return;
 
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = options.lineWidth || 3;
+  if (options.lineDash) ctx.setLineDash(options.lineDash);
   ctx.beginPath();
   points.forEach(([x, y], index) => {
     const point = videoPointToCanvasPoint(x, y);
@@ -1933,6 +2115,7 @@ function renderFrameSummary() {
   const frameLabel = getFrameLabel(getCurrentFrame());
   const tablePrediction = getCurrentTablePrediction();
   const ballPrediction = getCurrentBallPrediction();
+  const netPrediction = getCurrentNetPrediction();
   elements.frameSummary.innerHTML = "";
 
   if (!frameLabel || frameLabel.objects.length === 0) {
@@ -1954,6 +2137,11 @@ function renderFrameSummary() {
     elements.frameSummary.append(createSummaryItem("Ball Pred", `${bbox[0]}, ${bbox[1]} ${bbox[2]}x${bbox[3]}${confidence}`));
   }
 
+  if (netPrediction) {
+    const confidence = netPrediction.confidence === null ? "" : ` ${(netPrediction.confidence * 100).toFixed(0)}%`;
+    elements.frameSummary.append(createSummaryItem("Net Pred", `${netPrediction.line.length} pts${confidence}`));
+  }
+
   const events = state.annotations.events.filter((event) => event.frame === getCurrentFrame());
   if (events.length === 0) {
     elements.frameSummary.append(createSummaryItem("Events", "None"));
@@ -1968,12 +2156,14 @@ function updatePredictionStatus() {
   const predictionCount = state.predictions.frames.length;
   const currentTablePrediction = getCurrentTablePrediction();
   const currentBallPrediction = getCurrentBallPrediction();
+  const currentNetPrediction = getCurrentNetPrediction();
   const label = predictionCount === 0
     ? "No predictions loaded"
-    : `${predictionCount} predicted frames${currentTablePrediction || currentBallPrediction ? " / current frame" : ""}`;
+    : `${predictionCount} predicted frames${currentTablePrediction || currentBallPrediction || currentNetPrediction ? " / current frame" : ""}`;
   elements.predictionStatus.textContent = label;
   elements.acceptTablePredictionButton.disabled = !currentTablePrediction;
   elements.acceptBallPredictionButton.disabled = !currentBallPrediction;
+  elements.acceptNetPredictionButton.disabled = !currentNetPrediction;
   elements.togglePredictionsButton.disabled = predictionCount === 0;
   elements.togglePredictionsButton.textContent = state.showPredictions ? "Hide Predictions" : "Show Predictions";
 }

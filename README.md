@@ -69,7 +69,7 @@ Labeler shortcuts:
 - `Enter`: finish a table polygon with three or more points
 - `F`: flip an inferred cropped-table closure to the other frame edge
 - `Escape`: cancel pending table/net points
-- Drag table vertices: correct saved table polygon points
+- Drag table/net vertices: correct saved or pending table/net points
 - `B`: ball tool
 - `T`: table tool
 - `N`: net tool
@@ -134,6 +134,8 @@ Notebooks:
   notebook for table polygons.
 - `notebooks/train_geometry_segmenter_colab.ipynb`: baseline YOLO segmentation
   notebook for combined table and net geometry.
+- `notebooks/train_net_pose_colab.ipynb`: baseline YOLO pose/keypoint notebook
+  for direct net-line prediction.
 
 Start with `yolo26n.pt` at `imgsz=960`, then compare `yolo26s.pt` once the
 export/training loop works. For honest validation, collect several videos and
@@ -190,9 +192,54 @@ yolo segment train \
   imgsz=960
 ```
 
+After training, export geometry predictions for labeler review:
+
+```bash
+python3 tools/export_yolo/predict_geometry_labels.py \
+  --model models/geometry_segmenter/geometry_yolo26n_seg_img640.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.geometry_predictions.json
+```
+
 If the net band is too skinny or too wide, rerun the exporter with
 `--net-thickness-px`. If segmentation is not precise enough for the sagging net
 line, the next model should be a dedicated three-keypoint net detector.
+
+See `docs/model-training-notes.md` for experiment results and lessons learned
+from model runs.
+
+## Net Line Keypoint Pipeline
+
+The net line can also be trained directly as a pose/keypoint task. This predicts
+three editable points instead of a segmentation mask: left endpoint, middle/dip,
+and right endpoint.
+
+```bash
+python3 tools/export_yolo/export_net_pose_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/net_yolo_pose \
+  --clean
+```
+
+Train:
+
+```bash
+yolo pose train \
+  model=yolo26n-pose.pt \
+  data=data/exports/net_yolo_pose/dataset.yaml \
+  epochs=30 \
+  imgsz=640
+```
+
+After training, export net-line predictions:
+
+```bash
+python3 tools/export_yolo/predict_net_pose_labels.py \
+  --model models/net_pose/net_yolo26n_pose_img640.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.net_predictions.json
+```
 
 ## Event Detection Training Pipeline
 

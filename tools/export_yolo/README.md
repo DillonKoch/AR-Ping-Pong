@@ -161,3 +161,54 @@ This combined model is the quickest path because it predicts the table and net
 in one pass. If the net masks are too imprecise, the next version should be a
 dedicated keypoint/pose model for left endpoint, midpoint/dip, and right
 endpoint.
+
+Export combined geometry predictions for review in the browser labeler:
+
+```bash
+python3 tools/export_yolo/predict_geometry_labels.py \
+  --model models/geometry_segmenter/geometry_yolo26n_seg_img640.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.geometry_predictions.json
+```
+
+The predictor keeps the best table mask as a polygon and converts the best net
+mask into a three-point editable net line. If the labeler's Save Folder is set,
+a matching `*.geometry_predictions.json` file auto-loads when you choose the
+video.
+
+## Export Net Line Pose Dataset
+
+The net can also be trained as a direct keypoint/pose problem instead of a thin
+segmentation mask. This matches the labeler format more closely: left endpoint,
+middle/dip, right endpoint.
+
+```bash
+python3 tools/export_yolo/export_net_pose_dataset.py \
+  --annotations data/annotations \
+  --videos data/videos \
+  --out data/exports/net_yolo_pose \
+  --clean
+```
+
+Train a first net keypoint model:
+
+```bash
+yolo pose train \
+  model=yolo26n-pose.pt \
+  data=data/exports/net_yolo_pose/dataset.yaml \
+  epochs=30 \
+  imgsz=640
+```
+
+Export net-line predictions for labeler review:
+
+```bash
+python3 tools/export_yolo/predict_net_pose_labels.py \
+  --model models/net_pose/net_yolo26n_pose_img640.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.net_predictions.json
+```
+
+The labeler can load these predictions with the Predictions picker. If Save
+Folder auto-load is enabled, use the filename pattern
+`<video-id>.net_predictions.json`.
