@@ -197,6 +197,10 @@ h1 {
   transform-origin: center center;
 }
 
+.viewport.zoomed {
+  will-change: transform;
+}
+
 video,
 canvas {
   max-width: 100%;

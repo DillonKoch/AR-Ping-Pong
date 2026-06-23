@@ -1628,8 +1628,8 @@ function downloadBlob(blob, filename) {
 }
 
 function render() {
-  renderViewportTransform();
   resizeCanvasToVideo();
+  renderViewportTransform();
   drawOverlay();
   renderReadout();
   renderEventButtons();
@@ -1640,6 +1640,7 @@ function render() {
 
 function renderViewportTransform() {
   elements.viewport.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  elements.viewport.classList.toggle("zoomed", state.zoom > 1);
   elements.zoomOutButton.disabled = state.zoom <= 1;
   elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
   elements.finishTableButton.disabled = getCurrentPendingTablePoints().length < 3;
