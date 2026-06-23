@@ -64,6 +64,19 @@ By default, blurred ball labels are included and occluded ball labels are
 skipped. Use `--exclude-blurred` for a cleaner first dataset or
 `--include-occluded` if you want the detector to learn harder examples.
 
+Export model ball predictions for review in the browser labeler:
+
+```bash
+python3 tools/export_yolo/predict_ball_labels.py \
+  --model models/ball_detector/ball_yolo26n_img960.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.ball_predictions.json
+```
+
+If the labeler's Save Folder is set, a matching `*.ball_predictions.json` file
+auto-loads when you choose the video. Ball predictions are overlays until you
+accept them with `Accept Ball`.
+
 ## Export Table Segmentation
 
 Table labels are polygons, so the table exporter creates a YOLO segmentation

@@ -121,7 +121,7 @@ to COCO, YOLO, tracking CSVs, or model-specific event windows.
 
 The labeler can load model predictions as a separate JSON file. Predictions are
 displayed as an overlay and are not saved as labels unless accepted in the UI.
-Accepted table predictions become normal editable table labels.
+Accepted table and ball predictions become normal editable labels.
 
 ```json
 {
@@ -133,6 +133,12 @@ Accepted table predictions become normal editable table labels.
           "type": "table",
           "polygon": [[410, 690], [1470, 675], [1260, 438], [610, 448]],
           "confidence": 0.91
+        },
+        {
+          "type": "ball",
+          "center": [921, 451],
+          "bbox": [912, 442, 18, 18],
+          "confidence": 0.84
         }
       ]
     }
@@ -140,5 +146,5 @@ Accepted table predictions become normal editable table labels.
 }
 ```
 
-For quick scripts, each frame may also use a top-level `polygon` field instead
-of an `objects` array.
+For quick scripts, each frame may also use top-level `polygon` or `bbox` fields
+instead of an `objects` array.

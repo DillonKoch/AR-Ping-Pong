@@ -117,6 +117,15 @@ yolo detect train \
   imgsz=960
 ```
 
+After training, export ball predictions for labeler review:
+
+```bash
+python3 tools/export_yolo/predict_ball_labels.py \
+  --model models/ball_detector/ball_yolo26n_img960.pt \
+  --video data/videos/match_001.mp4 \
+  --out data/annotations/match_001.ball_predictions.json
+```
+
 Notebooks:
 
 - `notebooks/colab_hello_world.ipynb`: quick VS Code/Colab runtime smoke test.

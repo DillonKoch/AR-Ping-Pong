@@ -68,7 +68,8 @@ const elements = {
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
   predictionStatus: document.querySelector("#predictionStatus"),
-  acceptPredictionButton: document.querySelector("#acceptPredictionButton"),
+  acceptTablePredictionButton: document.querySelector("#acceptTablePredictionButton"),
+  acceptBallPredictionButton: document.querySelector("#acceptBallPredictionButton"),
   togglePredictionsButton: document.querySelector("#togglePredictionsButton"),
 };
 
@@ -111,7 +112,8 @@ elements.finishNetButton.addEventListener("click", finishNetLine);
 elements.closeTableEdgeButton.addEventListener("click", closeCurrentTableAlongFrameEdge);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
-elements.acceptPredictionButton.addEventListener("click", acceptCurrentTablePrediction);
+elements.acceptTablePredictionButton.addEventListener("click", acceptCurrentTablePrediction);
+elements.acceptBallPredictionButton.addEventListener("click", acceptCurrentBallPrediction);
 elements.togglePredictionsButton.addEventListener("click", togglePredictions);
 
 document.querySelectorAll("[data-tool]").forEach((button) => {
@@ -243,6 +245,36 @@ function normalizePredictions(input, sourceFilename = "") {
   };
 }
 
+function mergePredictions(predictionSets) {
+  const byFrame = new Map();
+  const sourceFilename = predictionSets
+    .map((predictionSet) => predictionSet.sourceFilename)
+    .filter(Boolean)
+    .join(", ");
+
+  predictionSets.forEach((predictionSet) => {
+    predictionSet.frames.forEach((framePrediction) => {
+      const existing = byFrame.get(framePrediction.frame) || {
+        frame: framePrediction.frame,
+        objects: [],
+      };
+      framePrediction.objects.forEach((object) => {
+        const index = existing.objects.findIndex((item) => item.type === object.type);
+        if (index >= 0) existing.objects[index] = object;
+        else existing.objects.push(object);
+      });
+      byFrame.set(framePrediction.frame, existing);
+    });
+  });
+
+  return {
+    sourceFilename,
+    frames: Array.from(byFrame.values())
+      .filter((frame) => frame.objects.length > 0)
+      .sort((a, b) => a.frame - b.frame),
+  };
+}
+
 function normalizePredictionFrame(frameInput) {
   const frame = Number(frameInput.frame);
   if (!Number.isFinite(frame)) return null;
@@ -251,10 +283,27 @@ function normalizePredictionFrame(frameInput) {
     ? frameInput.objects
     : frameInput.polygon
       ? [{ type: "table", polygon: frameInput.polygon, confidence: frameInput.confidence }]
+      : frameInput.bbox || frameInput.center
+        ? [{ type: "ball", bbox: frameInput.bbox, center: frameInput.center, confidence: frameInput.confidence }]
       : [];
 
   const objects = rawObjects
     .map((object) => {
+      if (object.type === "ball") {
+        const bbox = normalizePredictionBbox(object);
+        if (!bbox) return null;
+        return {
+          type: "ball",
+          center: [
+            round(bbox[0] + bbox[2] / 2),
+            round(bbox[1] + bbox[3] / 2),
+          ],
+          bbox,
+          confidence: Number.isFinite(Number(object.confidence)) ? Number(object.confidence) : null,
+          predicted: true,
+        };
+      }
+
       if (object.type !== "table" || !Array.isArray(object.polygon)) return null;
       const polygon = object.polygon
         .map((point) => Array.isArray(point) && point.length >= 2 ? [round(Number(point[0])), round(Number(point[1]))] : null)
@@ -270,6 +319,29 @@ function normalizePredictionFrame(frameInput) {
     .filter(Boolean);
 
   return { frame, objects };
+}
+
+function normalizePredictionBbox(object) {
+  if (Array.isArray(object.bbox) && object.bbox.length >= 4) {
+    const bbox = object.bbox.slice(0, 4).map((value) => round(Number(value)));
+    if (bbox.every(Number.isFinite) && bbox[2] > 0 && bbox[3] > 0) return bbox;
+  }
+
+  if (Array.isArray(object.center) && object.center.length >= 2) {
+    const radius = Number.isFinite(Number(object.radius)) ? Number(object.radius) : 8;
+    const centerX = Number(object.center[0]);
+    const centerY = Number(object.center[1]);
+    if (Number.isFinite(centerX) && Number.isFinite(centerY) && radius > 0) {
+      return [
+        round(centerX - radius),
+        round(centerY - radius),
+        round(radius * 2),
+        round(radius * 2),
+      ];
+    }
+  }
+
+  return null;
 }
 
 async function tryLoadMatchingAnnotations(videoFilename) {
@@ -296,7 +368,10 @@ async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle
   const loaded = [];
   const missing = [];
   const annotationFilename = `${getVideoId(videoFilename)}.labels.json`;
-  const predictionFilename = `${getVideoId(videoFilename)}.table_predictions.json`;
+  const predictionFilenames = [
+    `${getVideoId(videoFilename)}.table_predictions.json`,
+    `${getVideoId(videoFilename)}.ball_predictions.json`,
+  ];
 
   try {
     const fileHandle = await directoryHandle.getFileHandle(annotationFilename);
@@ -312,20 +387,27 @@ async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle
     }
   }
 
-  try {
-    const fileHandle = await directoryHandle.getFileHandle(predictionFilename);
-    const file = await fileHandle.getFile();
-    const parsed = JSON.parse(await file.text());
-    state.predictions = normalizePredictions(parsed, predictionFilename);
+  const predictionSets = [];
+  for (const predictionFilename of predictionFilenames) {
+    try {
+      const fileHandle = await directoryHandle.getFileHandle(predictionFilename);
+      const file = await fileHandle.getFile();
+      const parsed = JSON.parse(await file.text());
+      predictionSets.push(normalizePredictions(parsed, predictionFilename));
+    } catch (error) {
+      if (error.name !== "NotFoundError") {
+        window.alert(`Could not auto-load ${predictionFilename}: ${error.message}`);
+      }
+    }
+  }
+
+  if (predictionSets.length > 0) {
+    state.predictions = mergePredictions(predictionSets);
     state.showPredictions = true;
     loaded.push("predictions");
-  } catch (error) {
-    if (error.name === "NotFoundError") {
-      state.predictions = createEmptyPredictions();
-      missing.push("predictions");
-    } else {
-      window.alert(`Could not auto-load predictions: ${error.message}`);
-    }
+  } else {
+    state.predictions = createEmptyPredictions();
+    missing.push("predictions");
   }
 
   updatePredictionStatus();
@@ -1047,6 +1129,27 @@ function acceptCurrentTablePrediction() {
   render();
 }
 
+function acceptCurrentBallPrediction() {
+  const prediction = getCurrentBallPrediction();
+  if (!prediction) return;
+
+  pushHistory("accept-ball-prediction");
+  const frame = getCurrentFrame();
+  const frameLabel = getOrCreateFrameLabel(frame);
+  upsertObject(frameLabel, {
+    type: "ball",
+    center: [...prediction.center],
+    bbox: [...prediction.bbox],
+    confidence: prediction.confidence,
+    predictedFromModel: true,
+    interpolated: false,
+  });
+  interpolateBallLabels();
+  cleanupEmptyFrames();
+  setTool("ball");
+  render();
+}
+
 function togglePredictions() {
   state.showPredictions = !state.showPredictions;
   render();
@@ -1056,6 +1159,12 @@ function getCurrentTablePrediction() {
   if (!state.showPredictions) return null;
   const framePrediction = state.predictions.frames.find((item) => item.frame === getCurrentFrame());
   return framePrediction?.objects.find((object) => object.type === "table") || null;
+}
+
+function getCurrentBallPrediction() {
+  if (!state.showPredictions) return null;
+  const framePrediction = state.predictions.frames.find((item) => item.frame === getCurrentFrame());
+  return framePrediction?.objects.find((object) => object.type === "ball") || null;
 }
 
 function interpolateBallLabels() {
@@ -1528,10 +1637,10 @@ function resizeCanvasToVideo() {
 function drawOverlay() {
   ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
 
-  const prediction = getCurrentTablePrediction();
-  if (prediction) {
-    drawPredictionTable(prediction);
-  }
+  const tablePrediction = getCurrentTablePrediction();
+  const ballPrediction = getCurrentBallPrediction();
+  if (tablePrediction) drawPredictionTable(tablePrediction);
+  if (ballPrediction) drawPredictionBall(ballPrediction);
 
   const frameLabel = getFrameLabel(getCurrentFrame());
   if (frameLabel) {
@@ -1595,6 +1704,29 @@ function drawPredictionTable(table) {
     ctx.stroke();
     ctx.restore();
   });
+}
+
+function drawPredictionBall(ball) {
+  const bbox = getBallBbox(ball);
+  const start = videoPointToCanvasPoint(bbox[0], bbox[1]);
+  const end = videoPointToCanvasPoint(bbox[0] + bbox[2], bbox[1] + bbox[3]);
+  const center = videoPointToCanvasPoint(ball.center[0], ball.center[1]);
+  const width = end.x - start.x;
+  const height = end.y - start.y;
+
+  ctx.save();
+  ctx.strokeStyle = "#ffc857";
+  ctx.fillStyle = "rgba(255, 200, 87, 0.16)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(start.x, start.y, width, height);
+  ctx.strokeRect(start.x, start.y, width, height);
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffc857";
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawBall(ball) {
@@ -1720,7 +1852,8 @@ function renderEventButtons() {
 
 function renderFrameSummary() {
   const frameLabel = getFrameLabel(getCurrentFrame());
-  const prediction = getCurrentTablePrediction();
+  const tablePrediction = getCurrentTablePrediction();
+  const ballPrediction = getCurrentBallPrediction();
   elements.frameSummary.innerHTML = "";
 
   if (!frameLabel || frameLabel.objects.length === 0) {
@@ -1731,9 +1864,15 @@ function renderFrameSummary() {
     });
   }
 
-  if (prediction) {
-    const confidence = prediction.confidence === null ? "" : ` ${(prediction.confidence * 100).toFixed(0)}%`;
-    elements.frameSummary.append(createSummaryItem("Prediction", `${prediction.polygon.length} pts${confidence}`));
+  if (tablePrediction) {
+    const confidence = tablePrediction.confidence === null ? "" : ` ${(tablePrediction.confidence * 100).toFixed(0)}%`;
+    elements.frameSummary.append(createSummaryItem("Table Pred", `${tablePrediction.polygon.length} pts${confidence}`));
+  }
+
+  if (ballPrediction) {
+    const confidence = ballPrediction.confidence === null ? "" : ` ${(ballPrediction.confidence * 100).toFixed(0)}%`;
+    const bbox = getBallBbox(ballPrediction);
+    elements.frameSummary.append(createSummaryItem("Ball Pred", `${bbox[0]}, ${bbox[1]} ${bbox[2]}x${bbox[3]}${confidence}`));
   }
 
   const events = state.annotations.events.filter((event) => event.frame === getCurrentFrame());
@@ -1748,12 +1887,14 @@ function renderFrameSummary() {
 
 function updatePredictionStatus() {
   const predictionCount = state.predictions.frames.length;
-  const currentPrediction = getCurrentTablePrediction();
+  const currentTablePrediction = getCurrentTablePrediction();
+  const currentBallPrediction = getCurrentBallPrediction();
   const label = predictionCount === 0
     ? "No predictions loaded"
-    : `${predictionCount} predicted frames${currentPrediction ? " / current frame" : ""}`;
+    : `${predictionCount} predicted frames${currentTablePrediction || currentBallPrediction ? " / current frame" : ""}`;
   elements.predictionStatus.textContent = label;
-  elements.acceptPredictionButton.disabled = !currentPrediction;
+  elements.acceptTablePredictionButton.disabled = !currentTablePrediction;
+  elements.acceptBallPredictionButton.disabled = !currentBallPrediction;
   elements.togglePredictionsButton.disabled = predictionCount === 0;
   elements.togglePredictionsButton.textContent = state.showPredictions ? "Hide Predictions" : "Show Predictions";
 }
