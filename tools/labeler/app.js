@@ -101,6 +101,7 @@ elements.canvas.addEventListener("pointerdown", handleCanvasPointerDown);
 elements.canvas.addEventListener("pointermove", handleCanvasPointerMove);
 elements.canvas.addEventListener("pointerup", handleCanvasPointerUp);
 elements.canvas.addEventListener("pointercancel", cancelBallDrag);
+elements.viewport.addEventListener("wheel", handleViewportWheel, { passive: false });
 elements.video.addEventListener("loadedmetadata", handleLoadedMetadata);
 elements.video.addEventListener("timeupdate", render);
 elements.video.addEventListener("seeked", render);
@@ -588,7 +589,23 @@ function adjustZoom(multiplier) {
     state.panY = 0;
   }
   state.zoom = nextZoom;
+  clampPan();
   render();
+}
+
+function handleViewportWheel(event) {
+  if (!elements.video.src) return;
+
+  if (event.altKey) {
+    event.preventDefault();
+    adjustZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12);
+    return;
+  }
+
+  if (state.zoom === 1) return;
+
+  event.preventDefault();
+  panView(-event.deltaX, -event.deltaY);
 }
 
 function panView(deltaX, deltaY) {
@@ -596,14 +613,33 @@ function panView(deltaX, deltaY) {
 
   state.panX += deltaX;
   state.panY += deltaY;
+  clampPan();
+  render();
+}
+
+function clampPan() {
+  if (state.zoom === 1) {
+    state.panX = 0;
+    state.panY = 0;
+    return;
+  }
+
+  const maxPanX = Math.max(0, elements.viewport.clientWidth * (state.zoom - 1) / 2);
+  const maxPanY = Math.max(0, elements.viewport.clientHeight * (state.zoom - 1) / 2);
+  state.panX = clamp(state.panX, -maxPanX, maxPanX);
+  state.panY = clamp(state.panY, -maxPanY, maxPanY);
+}
+
+function setPan(x, y) {
+  state.panX = x;
+  state.panY = y;
+  clampPan();
   render();
 }
 
 function resetView() {
   state.zoom = 1;
-  state.panX = 0;
-  state.panY = 0;
-  render();
+  setPan(0, 0);
 }
 
 function handleCanvasPointerDown(event) {
@@ -1715,17 +1751,23 @@ function drawPredictionBall(ball) {
   const height = end.y - start.y;
 
   ctx.save();
+  ctx.fillStyle = "rgba(255, 200, 87, 0.24)";
+  ctx.strokeStyle = "rgba(11, 15, 20, 0.86)";
+  ctx.lineWidth = 4;
+  ctx.fillRect(start.x, start.y, width, height);
+  ctx.strokeRect(start.x, start.y, width, height);
   ctx.strokeStyle = "#ffc857";
-  ctx.fillStyle = "rgba(255, 200, 87, 0.16)";
   ctx.lineWidth = 2;
   ctx.setLineDash([6, 4]);
-  ctx.fillRect(start.x, start.y, width, height);
   ctx.strokeRect(start.x, start.y, width, height);
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+  ctx.arc(center.x, center.y, 5, 0, Math.PI * 2);
   ctx.fillStyle = "#ffc857";
   ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(11, 15, 20, 0.9)";
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -1737,11 +1779,25 @@ function drawBall(ball) {
   const height = end.y - start.y;
 
   ctx.save();
-  ctx.strokeStyle = ball.occluded ? "rgba(255, 200, 87, 0.28)" : "rgba(255, 107, 107, 0.24)";
-  ctx.fillStyle = ball.occluded ? "rgba(255, 200, 87, 0.14)" : "rgba(255, 107, 107, 0.12)";
-  ctx.lineWidth = 0.75;
+  const color = ball.occluded ? "#ffc857" : "#ff6b6b";
+  ctx.fillStyle = ball.occluded ? "rgba(255, 200, 87, 0.24)" : "rgba(255, 107, 107, 0.24)";
+  ctx.strokeStyle = "rgba(11, 15, 20, 0.82)";
+  ctx.lineWidth = 4;
   ctx.fillRect(start.x, start.y, width, height);
   ctx.strokeRect(start.x, start.y, width, height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(start.x, start.y, width, height);
+  if (ball.center) {
+    const center = videoPointToCanvasPoint(ball.center[0], ball.center[1]);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(11, 15, 20, 0.9)";
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
