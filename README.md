@@ -132,6 +132,8 @@ Notebooks:
 - `notebooks/train_ball_detector_colab.ipynb`: baseline YOLO training notebook.
 - `notebooks/train_table_segmenter_colab.ipynb`: baseline YOLO segmentation
   notebook for table polygons.
+- `notebooks/train_geometry_segmenter_colab.ipynb`: baseline YOLO segmentation
+  notebook for combined table and net geometry.
 
 Start with `yolo26n.pt` at `imgsz=960`, then compare `yolo26s.pt` once the
 export/training loop works. For honest validation, collect several videos and

@@ -148,6 +148,11 @@ def make_dataset_dirs(out_dir: Path) -> None:
 def collect_annotation_paths(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
+
+    label_paths = sorted(item for item in path.glob("*.labels.json") if item.is_file())
+    if label_paths:
+        return label_paths
+
     return sorted(item for item in path.glob("*.json") if item.is_file())
 
 

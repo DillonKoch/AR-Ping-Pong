@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
         default=14,
         help="Pixel thickness used to convert net polylines into segmentation masks. Default: 14.",
     )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=25,
+        help="Print export progress every N frames. Use 0 to disable. Default: 25.",
+    )
     parser.add_argument("--clean", action="store_true", help="Delete the output directory before exporting.")
     return parser.parse_args()
 
@@ -110,6 +116,11 @@ def make_dataset_dirs(out_dir: Path) -> None:
 def collect_annotation_paths(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
+
+    label_paths = sorted(item for item in path.glob("*.labels.json") if item.is_file())
+    if label_paths:
+        return label_paths
+
     return sorted(item for item in path.glob("*.json") if item.is_file())
 
 
@@ -241,7 +252,13 @@ def export_frames(frames: list[GeometryFrame], args: argparse.Namespace) -> dict
     frame_sizes: dict[Path, tuple[int, int]] = {}
 
     try:
-        for frame_label in frames:
+        ordered_frames = sorted(frames, key=lambda item: (str(item.video_path), item.frame))
+        total = len(ordered_frames)
+
+        for index, frame_label in enumerate(ordered_frames, start=1):
+            if args.progress_every and (index == 1 or index % args.progress_every == 0 or index == total):
+                print(f"exporting geometry frame {index}/{total}: {frame_label.video_id} frame {frame_label.frame}", flush=True)
+
             capture = captures.get(frame_label.video_path)
             if capture is None:
                 capture = cv2.VideoCapture(str(frame_label.video_path))
