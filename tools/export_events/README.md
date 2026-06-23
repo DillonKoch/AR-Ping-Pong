@@ -65,6 +65,30 @@ python3 tools/export_events/export_event_clips.py \
 Background clips are useful once you have enough video; they teach the model not
 to hallucinate bounce/net/contact events during ordinary flight.
 
+## Net-Hit Candidate Heuristic
+
+Before training a temporal model, you can draft candidate `net_hit` events from
+existing ball and net labels:
+
+```bash
+python3 tools/export_events/detect_net_hit_candidates.py \
+  --annotations data/annotations \
+  --out data/exports/net_hit_candidates.json
+```
+
+The heuristic looks for frames where the labeled ball center is close to the
+labeled net line and either crosses the net line or changes trajectory sharply.
+The output is review data, not ground truth. Tune the thresholds if it is too
+strict or too noisy:
+
+```bash
+python3 tools/export_events/detect_net_hit_candidates.py \
+  --annotations data/annotations \
+  --out data/exports/net_hit_candidates.json \
+  --max-distance-px 24 \
+  --min-angle-change-deg 18
+```
+
 ## Validation
 
 Use `--split-mode video` once you have several labeled videos. This keeps whole

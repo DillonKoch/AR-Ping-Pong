@@ -223,6 +223,17 @@ metrics. The likely long-term referee will combine ball tracking, table geometry
 rules, and a temporal classifier rather than relying on event classification
 alone.
 
+You can also generate first-pass `net_hit` candidates from ball and net labels:
+
+```bash
+python3 tools/export_events/detect_net_hit_candidates.py \
+  --annotations data/annotations \
+  --out data/exports/net_hit_candidates.json
+```
+
+This is a review heuristic, not ground truth. It scores frames where the ball is
+near the net and either crosses it or changes trajectory sharply.
+
 ## Controls
 
 - `Left` / `Right`: move focus between controls
