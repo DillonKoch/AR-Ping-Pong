@@ -37,6 +37,7 @@ const elements = {
   predictionInput: document.querySelector("#predictionInput"),
   chooseSaveFolderButton: document.querySelector("#chooseSaveFolderButton"),
   downloadButton: document.querySelector("#downloadButton"),
+  stageWrap: document.querySelector(".stage-wrap"),
   viewport: document.querySelector("#viewport"),
   video: document.querySelector("#video"),
   canvas: document.querySelector("#overlay"),
@@ -583,14 +584,13 @@ function setTool(tool) {
 }
 
 function adjustZoom(multiplier) {
+  const previousScroll = getStageScrollRatios();
   const nextZoom = Math.min(8, Math.max(1, state.zoom * multiplier));
-  if (nextZoom === 1) {
-    state.panX = 0;
-    state.panY = 0;
-  }
+  if (nextZoom === state.zoom) return;
+
   state.zoom = nextZoom;
-  clampPan();
   render();
+  restoreStageScrollRatios(previousScroll);
 }
 
 function handleViewportWheel(event) {
@@ -611,35 +611,41 @@ function handleViewportWheel(event) {
 function panView(deltaX, deltaY) {
   if (state.zoom === 1) return;
 
-  state.panX += deltaX;
-  state.panY += deltaY;
-  clampPan();
-  render();
-}
-
-function clampPan() {
-  if (state.zoom === 1) {
-    state.panX = 0;
-    state.panY = 0;
-    return;
-  }
-
-  const maxPanX = Math.max(0, elements.viewport.clientWidth * (state.zoom - 1) / 2);
-  const maxPanY = Math.max(0, elements.viewport.clientHeight * (state.zoom - 1) / 2);
-  state.panX = clamp(state.panX, -maxPanX, maxPanX);
-  state.panY = clamp(state.panY, -maxPanY, maxPanY);
-}
-
-function setPan(x, y) {
-  state.panX = x;
-  state.panY = y;
-  clampPan();
-  render();
+  elements.stageWrap.scrollBy({
+    left: -deltaX,
+    top: -deltaY,
+    behavior: "auto",
+  });
 }
 
 function resetView() {
   state.zoom = 1;
-  setPan(0, 0);
+  state.panX = 0;
+  state.panY = 0;
+  render();
+  elements.stageWrap.scrollTo({ left: 0, top: 0, behavior: "auto" });
+}
+
+function getStageScrollRatios() {
+  const wrap = elements.stageWrap;
+  return {
+    x: wrap.scrollWidth > 0 ? (wrap.scrollLeft + wrap.clientWidth / 2) / wrap.scrollWidth : 0.5,
+    y: wrap.scrollHeight > 0 ? (wrap.scrollTop + wrap.clientHeight / 2) / wrap.scrollHeight : 0.5,
+  };
+}
+
+function restoreStageScrollRatios(ratios) {
+  const wrap = elements.stageWrap;
+  if (state.zoom === 1) {
+    wrap.scrollTo({ left: 0, top: 0, behavior: "auto" });
+    return;
+  }
+
+  wrap.scrollTo({
+    left: ratios.x * wrap.scrollWidth - wrap.clientWidth / 2,
+    top: ratios.y * wrap.scrollHeight - wrap.clientHeight / 2,
+    behavior: "auto",
+  });
 }
 
 function handleCanvasPointerDown(event) {
@@ -1639,10 +1645,9 @@ function render() {
 }
 
 function renderViewportTransform() {
-  elements.viewport.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
   elements.viewport.classList.toggle("zoomed", state.zoom > 1);
   elements.zoomOutButton.disabled = state.zoom <= 1;
-  elements.resetViewButton.disabled = state.zoom === 1 && state.panX === 0 && state.panY === 0;
+  elements.resetViewButton.disabled = state.zoom === 1;
   elements.finishTableButton.disabled = getCurrentPendingTablePoints().length < 3;
   elements.finishNetButton.disabled = getCurrentPendingNetPoints().length < 2;
   const currentObjects = getFrameLabel(getCurrentFrame())?.objects || [];
@@ -1659,8 +1664,11 @@ function resizeCanvasToVideo() {
 
   const maxHeight = Math.min(window.innerHeight * 0.78, elements.video.videoHeight);
   const aspect = video.videoWidth / video.videoHeight;
-  const targetWidth = Math.min(elements.video.videoWidth, maxHeight * aspect);
+  const baseWidth = Math.min(elements.video.videoWidth, maxHeight * aspect);
+  const targetWidth = baseWidth * state.zoom;
+  const targetHeight = targetWidth / aspect;
   elements.viewport.style.width = `${Math.round(targetWidth)}px`;
+  elements.viewport.style.height = `${Math.round(targetHeight)}px`;
   elements.viewport.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
 
   const width = video.clientWidth;
