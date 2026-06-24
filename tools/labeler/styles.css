@@ -233,7 +233,7 @@ h1 {
   justify-content: flex-start;
   overflow: auto;
   max-height: 78vh;
-  border: 3px solid #000;
+  border: 9px solid #000;
   border-radius: 8px;
   background: transparent;
 }

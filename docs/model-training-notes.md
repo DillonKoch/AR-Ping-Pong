@@ -1,5 +1,22 @@
 # Model Training Notes
 
+## Ball Detector Dataset
+
+Current prepared export:
+
+- Dataset ZIP: `data/exports/ball_yolo.zip`
+- Source videos: 2
+- Total labeled frames: 814
+- Train: 660
+- Validation: 154
+- Manual ball boxes: 716
+- Interpolated ball boxes: 98
+- Output model: `models/ball_detector/ball_yolo26n_img960.pt`
+
+Train with `notebooks/train_ball_detector_colab.ipynb`. The notebook uses
+`yolo26n.pt`, `imgsz=960`, `batch=4`, `workers=2`, and `cache=False` to stay
+within a standard Colab runtime.
+
 ## 2026-06-22 Geometry Segmenter Smoke Test
 
 Goal: train a first combined YOLO segmentation model for table and net geometry.
@@ -8,8 +25,8 @@ Dataset:
 
 - Exporter: `tools/export_yolo/export_geometry_dataset.py`
 - Dataset path: `data/exports/geometry_yolo_seg`
-- Source labels: `data/annotations/1_ig_reel.labels.json`
-- Source video: `data/videos/1_ig_reel.MOV`
+- Source labels: `data/annotations/001_instagram_20260621_01.labels.json`
+- Source video: `data/videos/001_instagram_20260621_01.mov`
 - Exported frames: 366
 - Train/val split: 293 train, 73 val
 - Exported objects: 178 table masks, 348 net masks
@@ -80,7 +97,7 @@ Drafted tooling:
 - `notebooks/train_net_pose_colab.ipynb`
 - `models/net_pose/README.md`
 
-Current export from `1_ig_reel.labels.json`:
+Current export from `001_instagram_20260621_01.labels.json`:
 
 - Exported net pose frames: 425
 - Train/val split: 340 train, 85 val

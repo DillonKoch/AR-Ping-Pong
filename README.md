@@ -47,6 +47,12 @@ Use it to:
 - Save/load annotation JSON sidecars.
 - Export the current frame as a PNG for model-training experiments.
 
+When `Auto-follow ball` is enabled, paused frame changes center and zoom around
+the current ball label. On an unlabeled frame, the labeler extrapolates from the
+two most recent visible ball labels and scales the view using recent box size.
+Manual zoom temporarily pauses auto-follow; drawing or accepting the next ball
+label resumes it for subsequent frames.
+
 Suggested data layout:
 
 ```txt
@@ -56,9 +62,16 @@ data/
   exports/      # exported frames or converted training datasets
 ```
 
+Name new videos using the permanent-ID convention in
+`docs/video-naming.md`, for example `002_screen_recording_20260623_01.mov`.
+
 Labeler shortcuts:
 
+- `W`: jump one frame past the furthest active ball, table, or net label
 - `Space`: play/pause
+- `A` / `D`: previous/next frame
+- `S`: clear the active ball, table, or net label on the current frame
+- `Q` / `E`: zoom out/in
 - `,` / `.`: previous/next frame
 - `Left` / `Right`: previous/next frame
 - `Up` / `Down`: zoom in/out
@@ -67,7 +80,7 @@ Labeler shortcuts:
 - `Shift` + arrows: pan while zoomed
 - Drag on the video: draw the current ball bounding box
 - `Enter`: finish a table polygon with three or more points
-- `F`: flip an inferred cropped-table closure to the other frame edge
+- `F`: flip a cropped table's fill to the opposite frame-edge closure
 - `Escape`: cancel pending table/net points
 - Drag table/net vertices: correct saved or pending table/net points
 - `B`: ball tool
@@ -85,8 +98,9 @@ directly into that folder. If direct folder saving is unavailable, the labeler
 falls back to downloading the JSON file.
 
 The labeler names sidecars as `<video-id>.labels.json`, where `<video-id>` is
-the video filename without its extension. For example, `1_ig_reel.MOV` saves to
-`data/annotations/1_ig_reel.labels.json`. Once Chrome has access to
+the video filename without its extension. For example,
+`001_instagram_20260621_01.mov` saves to
+`data/annotations/001_instagram_20260621_01.labels.json`. Once Chrome has access to
 `data/annotations/`, loading a video will auto-load the matching labels if that
 file exists. If you pick the video before choosing the save folder, choosing the
 folder will retry the auto-load.
@@ -297,7 +311,8 @@ the video frame and end at the other frame-edge exit point. When both endpoints
 are near the frame boundary, the labeler closes the polygon along the video edge
 and inserts any needed frame corners automatically. Because the camera user is
 on the near side of the table, cropped-table closure always prefers the bottom
-portion of the frame.
+portion of the frame. If that shades the outside instead, use `F` or
+`Flip Table Fill` to switch to the opposite frame-edge route.
 
 Table labels auto-interpolate between manual keyframes when both table polygons
 have the same number of points. If the point counts differ, that gap is skipped

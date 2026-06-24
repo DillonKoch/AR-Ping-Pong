@@ -95,6 +95,10 @@
             <input id="blurredInput" type="checkbox">
             Ball blurred
           </label>
+          <label class="checkbox-row">
+            <input id="autoFollowBallInput" type="checkbox" checked>
+            Auto-follow ball
+          </label>
         </section>
 
         <section class="panel-section">
@@ -119,7 +123,7 @@
             <button id="acceptTablePredictionButton" type="button">Accept Table</button>
             <button id="acceptBallPredictionButton" type="button">Accept Ball</button>
             <button id="acceptNetPredictionButton" type="button">Accept Net</button>
-            <button id="togglePredictionsButton" type="button">Hide Predictions</button>
+            <button id="togglePredictionsButton" type="button">Show Predictions</button>
           </div>
         </section>
 
@@ -140,6 +144,7 @@
             <button id="finishTableButton" type="button">Finish Table</button>
             <button id="finishNetButton" type="button">Finish Net</button>
             <button id="closeTableEdgeButton" type="button">Close Edge</button>
+            <button id="flipTableFillButton" type="button">Flip Table Fill</button>
             <button id="clearFrameButton" type="button">Clear Frame</button>
             <button id="newSessionButton" type="button">New Session</button>
           </div>
@@ -148,13 +153,18 @@
     </main>
 
     <footer class="shortcut-bar">
+      <span>W resume after labels</span>
       <span>Space play/pause</span>
+      <span>A / D frame step</span>
+      <span>S clear active label</span>
+      <span>Q / E zoom</span>
       <span>Left/Right frame step</span>
       <span>+ - zoom</span>
       <span>Shift+arrows pan</span>
       <span>Drag ball box</span>
       <span>Enter finish table/net</span>
       <span>C close table edge</span>
+      <span>F flip table fill</span>
       <span>Esc cancel points</span>
       <span>B ball</span>
       <span>T table</span>

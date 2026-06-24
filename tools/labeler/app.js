@@ -13,8 +13,14 @@ const state = {
   activeNetFrame: null,
   activeNetPointDrag: null,
   activeBallDrag: null,
+  autoFollowBall: true,
+  autoFollowBallSuspended: false,
+  lastAutoFollowFrame: null,
+  playbackFrameCallbackId: null,
+  playbackAnimationFrameId: null,
+  playbackMediaTime: null,
   predictions: createEmptyPredictions(),
-  showPredictions: true,
+  showPredictions: false,
   history: [],
   annotations: createEmptyAnnotations(),
 };
@@ -64,10 +70,12 @@ const elements = {
   eventList: document.querySelector("#eventList"),
   occludedInput: document.querySelector("#occludedInput"),
   blurredInput: document.querySelector("#blurredInput"),
+  autoFollowBallInput: document.querySelector("#autoFollowBallInput"),
   undoButton: document.querySelector("#undoButton"),
   finishTableButton: document.querySelector("#finishTableButton"),
   finishNetButton: document.querySelector("#finishNetButton"),
   closeTableEdgeButton: document.querySelector("#closeTableEdgeButton"),
+  flipTableFillButton: document.querySelector("#flipTableFillButton"),
   clearFrameButton: document.querySelector("#clearFrameButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
   predictionStatus: document.querySelector("#predictionStatus"),
@@ -81,6 +89,7 @@ const ctx = elements.canvas.getContext("2d");
 const ANNOTATION_DIRECTORY_DB = "ar-ping-pong-labeler";
 const ANNOTATION_DIRECTORY_STORE = "handles";
 const ANNOTATION_DIRECTORY_KEY = "annotation-directory";
+const MIN_ZOOM = 0.4;
 
 elements.videoInput.addEventListener("change", handleVideoInput);
 elements.annotationInput.addEventListener("change", handleAnnotationInput);
@@ -101,20 +110,23 @@ elements.clearBallButton.addEventListener("click", () => clearCurrentObject("bal
 elements.clearTableButton.addEventListener("click", () => clearCurrentObject("table"));
 elements.clearNetButton.addEventListener("click", () => clearCurrentObject("net"));
 elements.timeline.addEventListener("input", handleTimelineInput);
+elements.autoFollowBallInput.addEventListener("change", handleAutoFollowBallChange);
 elements.canvas.addEventListener("pointerdown", handleCanvasPointerDown);
 elements.canvas.addEventListener("pointermove", handleCanvasPointerMove);
 elements.canvas.addEventListener("pointerup", handleCanvasPointerUp);
 elements.canvas.addEventListener("pointercancel", cancelBallDrag);
 elements.viewport.addEventListener("wheel", handleViewportWheel, { passive: false });
 elements.video.addEventListener("loadedmetadata", handleLoadedMetadata);
-elements.video.addEventListener("timeupdate", render);
+elements.video.addEventListener("timeupdate", handleVideoTimeUpdate);
 elements.video.addEventListener("seeked", render);
-elements.video.addEventListener("play", render);
-elements.video.addEventListener("pause", render);
+elements.video.addEventListener("play", handleVideoPlay);
+elements.video.addEventListener("pause", handleVideoPause);
+elements.video.addEventListener("ended", handleVideoPause);
 elements.undoButton.addEventListener("click", undo);
 elements.finishTableButton.addEventListener("click", finishTablePolygon);
 elements.finishNetButton.addEventListener("click", finishNetLine);
 elements.closeTableEdgeButton.addEventListener("click", closeCurrentTableAlongFrameEdge);
+elements.flipTableFillButton.addEventListener("click", flipCurrentTableFill);
 elements.clearFrameButton.addEventListener("click", clearCurrentFrame);
 elements.newSessionButton.addEventListener("click", newSession);
 elements.acceptTablePredictionButton.addEventListener("click", acceptCurrentTablePrediction);
@@ -131,7 +143,7 @@ document.querySelectorAll("[data-event]").forEach((button) => {
 });
 
 document.addEventListener("keydown", handleKeydown);
-window.addEventListener("resize", render);
+window.addEventListener("resize", handleWindowResize);
 
 render();
 restoreAnnotationDirectoryHandle();
@@ -163,8 +175,11 @@ async function handleVideoInput(event) {
   const file = event.target.files[0];
   if (!file) return;
 
+  stopPlaybackRenderLoop();
   if (state.videoObjectUrl) URL.revokeObjectURL(state.videoObjectUrl);
   state.videoObjectUrl = URL.createObjectURL(file);
+  state.autoFollowBallSuspended = false;
+  state.lastAutoFollowFrame = null;
   elements.video.src = state.videoObjectUrl;
   elements.videoName.textContent = file.name;
 
@@ -225,7 +240,7 @@ function handlePredictionInput(event) {
     try {
       const parsed = JSON.parse(String(reader.result));
       state.predictions = normalizePredictions(parsed, file.name);
-      state.showPredictions = true;
+      state.showPredictions = false;
       updatePredictionStatus();
       render();
     } catch (error) {
@@ -431,7 +446,7 @@ async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle
 
   if (predictionSets.length > 0) {
     state.predictions = mergePredictions(predictionSets);
-    state.showPredictions = true;
+    state.showPredictions = false;
     loaded.push("predictions");
   } else {
     state.predictions = createEmptyPredictions();
@@ -450,6 +465,8 @@ async function tryLoadMatchingAssetsFromDirectory(videoFilename, directoryHandle
 
 function applyAnnotations(parsed) {
   state.annotations = normalizeAnnotations(parsed);
+  state.autoFollowBallSuspended = false;
+  state.lastAutoFollowFrame = null;
   state.fps = state.annotations.video.fps || state.fps;
   elements.fpsInput.value = String(state.fps);
   elements.videoName.textContent = state.annotations.video.filename || "Labels loaded";
@@ -492,6 +509,19 @@ function uniqueEvents(events) {
 function updateFps() {
   state.fps = Number(elements.fpsInput.value) || 30;
   state.annotations.video.fps = state.fps;
+  state.lastAutoFollowFrame = null;
+  render();
+}
+
+function handleWindowResize() {
+  state.lastAutoFollowFrame = null;
+  render();
+}
+
+function handleAutoFollowBallChange() {
+  state.autoFollowBall = elements.autoFollowBallInput.checked;
+  state.autoFollowBallSuspended = false;
+  state.lastAutoFollowFrame = null;
   render();
 }
 
@@ -503,6 +533,62 @@ function togglePlayback() {
   } else {
     elements.video.pause();
   }
+}
+
+function handleVideoPlay() {
+  state.playbackMediaTime = elements.video.currentTime || 0;
+  startPlaybackRenderLoop();
+  render();
+}
+
+function handleVideoPause() {
+  stopPlaybackRenderLoop();
+  state.playbackMediaTime = null;
+  render();
+}
+
+function handleVideoTimeUpdate() {
+  if (typeof elements.video.requestVideoFrameCallback === "function") return;
+  if (!elements.video.paused) return;
+  render();
+}
+
+function startPlaybackRenderLoop() {
+  stopPlaybackRenderLoop();
+
+  if (typeof elements.video.requestVideoFrameCallback === "function") {
+    const renderVideoFrame = (_now, metadata) => {
+      state.playbackFrameCallbackId = null;
+      state.playbackMediaTime = metadata.mediaTime;
+      render();
+      if (!elements.video.paused && !elements.video.ended) {
+        state.playbackFrameCallbackId = elements.video.requestVideoFrameCallback(renderVideoFrame);
+      }
+    };
+    state.playbackFrameCallbackId = elements.video.requestVideoFrameCallback(renderVideoFrame);
+    return;
+  }
+
+  const renderAnimationFrame = () => {
+    state.playbackAnimationFrameId = null;
+    state.playbackMediaTime = elements.video.currentTime || 0;
+    render();
+    if (!elements.video.paused && !elements.video.ended) {
+      state.playbackAnimationFrameId = requestAnimationFrame(renderAnimationFrame);
+    }
+  };
+  state.playbackAnimationFrameId = requestAnimationFrame(renderAnimationFrame);
+}
+
+function stopPlaybackRenderLoop() {
+  if (state.playbackFrameCallbackId !== null && typeof elements.video.cancelVideoFrameCallback === "function") {
+    elements.video.cancelVideoFrameCallback(state.playbackFrameCallbackId);
+  }
+  if (state.playbackAnimationFrameId !== null) {
+    cancelAnimationFrame(state.playbackAnimationFrameId);
+  }
+  state.playbackFrameCallbackId = null;
+  state.playbackAnimationFrameId = null;
 }
 
 function stepFrames(count) {
@@ -546,7 +632,10 @@ function handleKeydown(event) {
     togglePlayback();
   }
 
-  if (key === "arrowleft" && event.shiftKey) {
+  if (key === "w") {
+    event.preventDefault();
+    jumpAfterFurthestLabel();
+  } else if (key === "arrowleft" && event.shiftKey) {
     event.preventDefault();
     panView(40, 0);
   } else if (key === "arrowright" && event.shiftKey) {
@@ -558,16 +647,19 @@ function handleKeydown(event) {
   } else if (key === "arrowdown" && event.shiftKey) {
     event.preventDefault();
     panView(0, -40);
-  } else if (key === "arrowleft" || key === ",") {
+  } else if (key === "arrowleft" || key === "," || key === "a") {
     event.preventDefault();
     stepFrames(-1);
-  } else if (key === "arrowright" || key === ".") {
+  } else if (key === "arrowright" || key === "." || key === "d") {
     event.preventDefault();
     stepFrames(1);
-  } else if (key === "arrowup" || key === "=" || key === "+") {
+  } else if (key === "s") {
+    event.preventDefault();
+    clearCurrentToolObject();
+  } else if (key === "arrowup" || key === "=" || key === "+" || key === "e") {
     event.preventDefault();
     adjustZoom(1.25);
-  } else if (key === "arrowdown" || key === "-") {
+  } else if (key === "arrowdown" || key === "-" || key === "q") {
     event.preventDefault();
     adjustZoom(1 / 1.25);
   } else if (key === "0") {
@@ -587,9 +679,44 @@ function handleKeydown(event) {
   if (key === "n") setTool("net");
   if (key === "v") setTool("select");
   if (key === "c") closeCurrentTableAlongFrameEdge();
+  if (key === "f") flipCurrentTableFill();
   if (key === "u") undo();
   if (key === "backspace" || key === "delete") clearCurrentFrame();
   if (eventHotkeys[key]) addEvent(eventHotkeys[key]);
+}
+
+function clearCurrentToolObject() {
+  if (!elements.video.src) return;
+  if (!["ball", "table", "net"].includes(state.tool)) return;
+  clearCurrentObject(state.tool);
+}
+
+function jumpAfterFurthestLabel() {
+  if (!elements.video.src) return;
+
+  const type = getStatusObjectType();
+  if (!type) return;
+
+  flushPendingNetBeforeFrameChange();
+  state.activeTablePoints = [];
+  state.activeTableFrame = null;
+  state.activeTablePointDrag = null;
+
+  const labeledFrames = state.annotations.frames
+    .filter((frameLabel) => frameLabel.objects.some((object) => object.type === type))
+    .map((frameLabel) => frameLabel.frame);
+  const frameCount = Math.max(1, Math.ceil((elements.video.duration || 0) * state.fps));
+  const furthestLabeledFrame = labeledFrames.length > 0 ? Math.max(...labeledFrames) : -1;
+  const nextFrame = furthestLabeledFrame + 1;
+
+  if (nextFrame < frameCount) {
+    elements.video.pause();
+    elements.video.currentTime = clampTime(nextFrame / state.fps);
+    render();
+    return;
+  }
+
+  updateSaveStatus(`${capitalize(type)} labels cover every frame`);
 }
 
 function setTool(tool) {
@@ -597,6 +724,7 @@ function setTool(tool) {
     flushPendingNetBeforeFrameChange();
   }
   state.tool = tool;
+  state.lastAutoFollowFrame = null;
   state.activeTablePoints = [];
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
@@ -611,12 +739,107 @@ function setTool(tool) {
 
 function adjustZoom(multiplier) {
   const previousScroll = getStageScrollRatios();
-  const nextZoom = Math.min(8, Math.max(1, state.zoom * multiplier));
+  const nextZoom = Math.min(8, Math.max(MIN_ZOOM, state.zoom * multiplier));
   if (nextZoom === state.zoom) return;
 
+  suspendBallAutoFollowForManualZoom();
   state.zoom = nextZoom;
   render();
   restoreStageScrollRatios(previousScroll);
+}
+
+function getBallAutoFollowTarget() {
+  if (!state.autoFollowBall || state.tool !== "ball" || !elements.video.src || !elements.video.paused) return null;
+  if (state.autoFollowBallSuspended) return null;
+  if (state.activeBallDrag) return null;
+  if (!elements.video.videoWidth || !elements.video.videoHeight) return null;
+
+  const frame = getCurrentFrame();
+  if (state.lastAutoFollowFrame === frame) return null;
+  state.lastAutoFollowFrame = frame;
+
+  const currentBallObject = getFrameLabel(frame)?.objects.find((object) => object.type === "ball");
+  if (currentBallObject?.absent) return null;
+
+  const currentBall = currentBallObject;
+  if (currentBall) {
+    return createBallAutoFollowTarget(currentBall.center, getBallBbox(currentBall));
+  }
+
+  const previousBallStates = state.annotations.frames
+    .filter((frameLabel) => frameLabel.frame < frame)
+    .map((frameLabel) => ({
+      frame: frameLabel.frame,
+      ball: frameLabel.objects.find((object) => object.type === "ball"),
+    }))
+    .filter((item) => item.ball)
+    .sort((a, b) => b.frame - a.frame);
+  if (previousBallStates[0]?.ball.absent) return null;
+
+  const previousBalls = [];
+  for (const item of previousBallStates) {
+    if (item.ball.absent) break;
+    previousBalls.push(item);
+    if (previousBalls.length === 2) break;
+  }
+
+  if (previousBalls.length === 0) return null;
+
+  const latest = previousBalls[0];
+  const latestBox = getBallBbox(latest.ball);
+  const frameGap = frame - latest.frame;
+  let center = [...latest.ball.center];
+  const box = [...latestBox];
+
+  if (previousBalls.length === 2 && frameGap <= 12) {
+    const earlier = previousBalls[1];
+    const historyGap = latest.frame - earlier.frame;
+    if (historyGap > 0) {
+      const earlierBox = getBallBbox(earlier.ball);
+      center = [
+        latest.ball.center[0] + ((latest.ball.center[0] - earlier.ball.center[0]) / historyGap) * frameGap,
+        latest.ball.center[1] + ((latest.ball.center[1] - earlier.ball.center[1]) / historyGap) * frameGap,
+      ];
+      box[2] = latestBox[2] + ((latestBox[2] - earlierBox[2]) / historyGap) * frameGap;
+      box[3] = latestBox[3] + ((latestBox[3] - earlierBox[3]) / historyGap) * frameGap;
+    }
+  }
+
+  center[0] = Math.max(0, Math.min(elements.video.videoWidth, center[0]));
+  center[1] = Math.max(0, Math.min(elements.video.videoHeight, center[1]));
+  box[2] = Math.max(latestBox[2] * 0.5, Math.min(latestBox[2] * 2, box[2]));
+  box[3] = Math.max(latestBox[3] * 0.5, Math.min(latestBox[3] * 2, box[3]));
+  return createBallAutoFollowTarget(center, box);
+}
+
+function createBallAutoFollowTarget(center, bbox) {
+  const video = elements.video;
+  const maxHeight = Math.min(window.innerHeight * 0.78, video.videoHeight);
+  const baseWidth = Math.min(video.videoWidth, maxHeight * (video.videoWidth / video.videoHeight));
+  const displayedBallSize = Math.max(bbox[2], bbox[3]) * (baseWidth / video.videoWidth);
+  const desiredBallSize = 88;
+  const zoom = displayedBallSize > 0
+    ? Math.min(8, Math.max(MIN_ZOOM, desiredBallSize / displayedBallSize))
+    : state.zoom;
+
+  return {
+    center: [center[0], center[1]],
+    zoom,
+  };
+}
+
+function centerStageOnVideoPoint(point) {
+  if (state.zoom <= 1) return;
+
+  const wrap = elements.stageWrap;
+  const viewport = elements.viewport;
+  const x = viewport.offsetLeft + (point[0] / elements.video.videoWidth) * viewport.clientWidth;
+  const y = viewport.offsetTop + (point[1] / elements.video.videoHeight) * viewport.clientHeight;
+  wrap.scrollTo({
+    left: x - wrap.clientWidth / 2,
+    top: y - wrap.clientHeight / 2,
+    behavior: "auto",
+  });
 }
 
 function handleViewportWheel(event) {
@@ -628,14 +851,14 @@ function handleViewportWheel(event) {
     return;
   }
 
-  if (state.zoom === 1) return;
+  if (state.zoom <= 1) return;
 
   event.preventDefault();
   panView(-event.deltaX, -event.deltaY);
 }
 
 function panView(deltaX, deltaY) {
-  if (state.zoom === 1) return;
+  if (state.zoom <= 1) return;
 
   elements.stageWrap.scrollBy({
     left: -deltaX,
@@ -645,11 +868,22 @@ function panView(deltaX, deltaY) {
 }
 
 function resetView() {
+  suspendBallAutoFollowForManualZoom();
   state.zoom = 1;
   state.panX = 0;
   state.panY = 0;
   render();
   elements.stageWrap.scrollTo({ left: 0, top: 0, behavior: "auto" });
+}
+
+function suspendBallAutoFollowForManualZoom() {
+  if (!state.autoFollowBall || state.tool !== "ball") return;
+  state.autoFollowBallSuspended = true;
+}
+
+function resumeBallAutoFollowAfterLabel(frame) {
+  state.autoFollowBallSuspended = false;
+  state.lastAutoFollowFrame = frame;
 }
 
 function getStageScrollRatios() {
@@ -662,7 +896,7 @@ function getStageScrollRatios() {
 
 function restoreStageScrollRatios(ratios) {
   const wrap = elements.stageWrap;
-  if (state.zoom === 1) {
+  if (state.zoom <= 1) {
     wrap.scrollTo({ left: 0, top: 0, behavior: "auto" });
     return;
   }
@@ -900,6 +1134,39 @@ function closeCurrentTableAlongFrameEdge() {
   render();
 }
 
+function flipCurrentTableFill() {
+  const frameLabel = getFrameLabel(getCurrentFrame());
+  const table = frameLabel?.objects.find((object) => object.type === "table" && !object.absent);
+  if (!table?.boundaryClose?.sourcePoints) return;
+
+  const width = state.annotations.video.width || elements.video.videoWidth;
+  const height = state.annotations.video.height || elements.video.videoHeight;
+  if (!width || !height) return;
+
+  const sourcePoints = table.boundaryClose.sourcePoints;
+  const margin = Math.max(12, Math.min(width, height) * 0.08);
+  const first = snapPointToFrameEdge(sourcePoints[0], width, height, margin);
+  const last = snapPointToFrameEdge(sourcePoints[sourcePoints.length - 1], width, height, margin);
+  if (!first || !last) return;
+
+  const direction = table.boundaryClose.direction === 1 ? -1 : 1;
+  const boundaryPoints = frameBoundaryCornersBetween(last.position, first.position, width, height, direction);
+
+  pushHistory("flip-table-fill");
+  Object.assign(table, {
+    polygon: [first.point, ...sourcePoints.slice(1, -1), last.point, ...boundaryPoints],
+    boundaryClose: {
+      inferred: true,
+      direction,
+      sourcePoints,
+    },
+    interpolated: false,
+  });
+  interpolateTableLabels();
+  cleanupEmptyFrames();
+  render();
+}
+
 function completeTablePolygon(points, options = {}) {
   if (points.length < 3) return { polygon: [...points] };
 
@@ -1109,6 +1376,7 @@ function handleCanvasPointerUp(event) {
     blurred: elements.blurredInput.checked,
     interpolated: false,
   });
+  resumeBallAutoFollowAfterLabel(drag.frame);
   interpolateBallLabels();
   cleanupEmptyFrames();
   render();
@@ -1271,6 +1539,7 @@ function acceptCurrentBallPrediction() {
     predictedFromModel: true,
     interpolated: false,
   });
+  resumeBallAutoFollowAfterLabel(frame);
   interpolateBallLabels();
   cleanupEmptyFrames();
   setTool("ball");
@@ -1520,6 +1789,8 @@ function newSession() {
   pushHistory("new-session");
   const video = state.annotations.video;
   state.annotations = createEmptyAnnotations();
+  state.autoFollowBallSuspended = false;
+  state.lastAutoFollowFrame = null;
   state.annotations.video = { ...state.annotations.video, ...video };
   state.activeTablePoints = [];
   state.activeTableFrame = null;
@@ -1535,6 +1806,7 @@ function undo() {
   if (!snapshot) return;
 
   state.annotations = JSON.parse(snapshot);
+  state.lastAutoFollowFrame = null;
   state.activeTablePoints = [];
   state.activeTableFrame = null;
   state.activeTablePointDrag = null;
@@ -1745,6 +2017,8 @@ function downloadBlob(blob, filename) {
 }
 
 function render() {
+  const autoFollowTarget = getBallAutoFollowTarget();
+  if (autoFollowTarget) state.zoom = autoFollowTarget.zoom;
   resizeCanvasToVideo();
   renderViewportTransform();
   drawOverlay();
@@ -1754,11 +2028,14 @@ function render() {
   updatePredictionStatus();
   renderFrameSummary();
   renderEventList();
+  if (autoFollowTarget) {
+    requestAnimationFrame(() => centerStageOnVideoPoint(autoFollowTarget.center));
+  }
 }
 
 function renderViewportTransform() {
   elements.viewport.classList.toggle("zoomed", state.zoom > 1);
-  elements.zoomOutButton.disabled = state.zoom <= 1;
+  elements.zoomOutButton.disabled = state.zoom <= MIN_ZOOM;
   elements.resetViewButton.disabled = state.zoom === 1;
   elements.finishTableButton.disabled = getCurrentPendingTablePoints().length < 3;
   elements.finishNetButton.disabled = getCurrentPendingNetPoints().length < 2;
@@ -1767,7 +2044,9 @@ function renderViewportTransform() {
   elements.clearBallButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "ball" && object.absent);
   elements.clearTableButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "table" && object.absent);
   elements.clearNetButton.disabled = !hasVideo || currentObjects.some((object) => object.type === "net" && object.absent);
-  elements.closeTableEdgeButton.disabled = !currentObjects.some((object) => object.type === "table" && !object.absent);
+  const currentTable = currentObjects.find((object) => object.type === "table" && !object.absent);
+  elements.closeTableEdgeButton.disabled = !currentTable;
+  elements.flipTableFillButton.disabled = !currentTable?.boundaryClose?.sourcePoints;
 }
 
 function renderFrameLabelStatus() {
@@ -1847,10 +2126,12 @@ function resizeCanvasToVideo() {
 
   const width = video.clientWidth;
   const height = video.clientHeight;
-  elements.canvas.width = Math.round(width);
-  elements.canvas.height = Math.round(height);
-  elements.canvas.style.width = `${width}px`;
-  elements.canvas.style.height = `${height}px`;
+  const canvasWidth = Math.round(width);
+  const canvasHeight = Math.round(height);
+  if (elements.canvas.width !== canvasWidth) elements.canvas.width = canvasWidth;
+  if (elements.canvas.height !== canvasHeight) elements.canvas.height = canvasHeight;
+  if (elements.canvas.style.width !== `${width}px`) elements.canvas.style.width = `${width}px`;
+  if (elements.canvas.style.height !== `${height}px`) elements.canvas.style.height = `${height}px`;
 }
 
 function drawOverlay() {
@@ -2087,11 +2368,12 @@ function drawActiveBallDrag() {
 function renderReadout() {
   const frame = getCurrentFrame();
   const timeMs = getCurrentTimeMs();
+  const displayedTime = getDisplayedVideoTime();
   const durationMs = Math.round((elements.video.duration || 0) * 1000);
 
   elements.playButton.textContent = elements.video.paused ? "Play" : "Pause";
   elements.frameInput.value = String(frame);
-  elements.timeline.value = String(elements.video.currentTime || 0);
+  elements.timeline.value = String(displayedTime);
   elements.timeline.max = String(elements.video.duration || 0);
   elements.timeReadout.textContent = `${formatTime(timeMs)} / ${formatTime(durationMs)} / frame ${frame} / ${state.zoom.toFixed(2)}x`;
 }
@@ -2218,12 +2500,19 @@ function getFrameLabel(frame) {
   return state.annotations.frames.find((item) => item.frame === frame);
 }
 
+function getDisplayedVideoTime() {
+  if (!elements.video.paused && Number.isFinite(state.playbackMediaTime)) {
+    return state.playbackMediaTime;
+  }
+  return elements.video.currentTime || 0;
+}
+
 function getCurrentFrame() {
-  return Math.round((elements.video.currentTime || 0) * state.fps);
+  return Math.round(getDisplayedVideoTime() * state.fps);
 }
 
 function getCurrentTimeMs() {
-  return Math.round((elements.video.currentTime || 0) * 1000);
+  return Math.round(getDisplayedVideoTime() * 1000);
 }
 
 function estimateBallRadius() {
