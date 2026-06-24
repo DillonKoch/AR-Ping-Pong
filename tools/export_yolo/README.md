@@ -46,6 +46,11 @@ Coordinates are normalized to `[0, 1]`.
 Ball labels with `bbox` are exported as rectangular boxes. Older `center` plus
 `radius` labels are still supported and exported as square boxes.
 
+Annotation frames are converted through `video.fps` to timestamps before
+reading source-video frames. This matters when labels use 30 FPS indexing for a
+60 FPS source. The manifest records annotation/source frames and both FPS values
+for auditing.
+
 ## Train
 
 ```bash

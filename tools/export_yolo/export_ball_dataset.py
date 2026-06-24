@@ -19,6 +19,7 @@ class BallLabel:
     annotation_path: Path
     video_path: Path
     video_id: str
+    annotation_fps: float
     frame: int
     x: float
     y: float
@@ -179,6 +180,10 @@ def collect_ball_labels(
             continue
 
         video_id = video.get("id") or Path(video_filename).stem
+        annotation_fps = float(video.get("fps") or 30)
+        if annotation_fps <= 0:
+            print(f"Skipping {annotation_path}: invalid video.fps {annotation_fps}")
+            continue
         for frame_label in data.get("frames", []):
             frame = int(frame_label.get("frame", -1))
             if frame < 0:
@@ -206,6 +211,7 @@ def collect_ball_labels(
                     annotation_path=annotation_path,
                     video_path=video_path,
                     video_id=video_id,
+                    annotation_fps=annotation_fps,
                     frame=frame,
                     x=x,
                     y=y,
@@ -268,6 +274,8 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
 
     captures: dict[Path, cv2.VideoCapture] = {}
     frame_sizes: dict[Path, tuple[int, int]] = {}
+    source_fps: dict[Path, float] = {}
+    source_frame_counts: dict[Path, int] = {}
 
     try:
         for label in labels:
@@ -278,10 +286,22 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
                     print(f"Could not open video: {label.video_path}")
                     continue
                 captures[label.video_path] = capture
+                source_fps[label.video_path] = float(capture.get(cv2.CAP_PROP_FPS))
+                source_frame_counts[label.video_path] = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
 
-            frame = read_video_frame(capture, label.frame)
+            video_fps = source_fps[label.video_path]
+            source_frame = annotation_frame_to_source_frame(
+                annotation_frame=label.frame,
+                annotation_fps=label.annotation_fps,
+                source_fps=video_fps,
+                source_frame_count=source_frame_counts[label.video_path],
+            )
+            frame = read_video_frame(capture, source_frame)
             if frame is None:
-                print(f"Could not read frame {label.frame} from {label.video_path}")
+                print(
+                    f"Could not read annotation frame {label.frame} "
+                    f"(source frame {source_frame}) from {label.video_path}"
+                )
                 continue
 
             height, width = frame.shape[:2]
@@ -301,6 +321,10 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
                     "label": str(label_path),
                     "video": str(label.video_path),
                     "frame": label.frame,
+                    "annotation_fps": label.annotation_fps,
+                    "source_frame": source_frame,
+                    "source_fps": video_fps,
+                    "time_seconds": label.frame / label.annotation_fps,
                     "occluded": label.occluded,
                     "blurred": label.blurred,
                 }
@@ -312,7 +336,24 @@ def export_labels(labels: list[BallLabel], args: argparse.Namespace) -> dict[str
     manifest["frame_sizes"] = {
         str(path): {"width": size[0], "height": size[1]} for path, size in frame_sizes.items()
     }
+    manifest["source_fps"] = {str(path): fps for path, fps in source_fps.items()}
     return manifest
+
+
+def annotation_frame_to_source_frame(
+    annotation_frame: int,
+    annotation_fps: float,
+    source_fps: float,
+    source_frame_count: int | None = None,
+) -> int:
+    if annotation_fps <= 0:
+        raise ValueError(f"annotation_fps must be positive, got {annotation_fps}")
+    if source_fps <= 0:
+        raise ValueError(f"source_fps must be positive, got {source_fps}")
+    source_frame = round((annotation_frame / annotation_fps) * source_fps)
+    if source_frame_count is not None and source_frame_count > 0:
+        source_frame = min(source_frame, source_frame_count - 1)
+    return max(0, source_frame)
 
 
 def read_video_frame(capture: cv2.VideoCapture, frame_index: int) -> Any | None:

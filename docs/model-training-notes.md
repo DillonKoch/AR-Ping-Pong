@@ -1,5 +1,18 @@
 # Model Training Notes
 
+## Notebook Reporting Standard
+
+Training notebooks should include a dashboard after training:
+
+- Train and validation loss by epoch
+- Validation precision, recall, and mAP when available
+- Train and validation accuracy for classifiers
+- Ultralytics `results.png` and confusion matrices when generated
+
+The dashboard should update at the end of every epoch and retain a final
+post-training summary. Ultralytics notebooks use `on_fit_epoch_end`, after the
+epoch's validation metrics are written to `results.csv`.
+
 ## Ball Detector Dataset
 
 Current prepared export:
@@ -16,6 +29,22 @@ Current prepared export:
 Train with `notebooks/train_ball_detector_colab.ipynb`. The notebook uses
 `yolo26n.pt`, `imgsz=960`, `batch=4`, `workers=2`, and `cache=False` to stay
 within a standard Colab runtime.
+
+### 2026-06-23 Failed Ball Run
+
+The first export produced essentially zero validation mAP through epoch 57. The
+source videos are approximately 60 FPS, while labeler frame indices use 30 FPS.
+The exporter incorrectly read annotation frame `N` as source frame `N`, placing
+boxes on images from roughly half the intended timestamp.
+
+The exporter now resolves source frames through time:
+
+```text
+source_frame = round(annotation_frame / annotation_fps * source_fps)
+```
+
+The corrected dataset was rebuilt and visually checked with boxes overlaid on
+sampled exported images. Do not use the ZIP created before this fix.
 
 ## 2026-06-22 Geometry Segmenter Smoke Test
 
